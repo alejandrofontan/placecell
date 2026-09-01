@@ -1,0 +1,20 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "placecell"
+version = "0.1.0"
+description = "Keyframe lifecycle management for VSLAM and 3D reconstruction"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Alejandro Fontan" }]
+requires-python = ">=3.9"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+wheel.packages = ["python/placecell"]
+
+[tool.scikit-build.cmake.define]
+PLACECELL_BUILD_PYTHON = "ON"
+PLACECELL_BUILD_EXAMPLES = "OFF"

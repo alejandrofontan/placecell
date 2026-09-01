@@ -1,0 +1,22 @@
+[workspace]
+authors = ["alejandrofontan <fontanvillacampa@gmail.com>"]
+channels = ["conda-forge"]
+name = "placecell"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_BUILD_PYTHON=ON"
+build = { cmd = "cmake --build build", depends-on = ["configure"] }
+example = { cmd = "./build/examples/placecell_example", depends-on = ["build"] }
+python-smoke = { cmd = '''python -c "import sys; sys.path.insert(0, 'build/python'); import _placecell; print(_placecell.PlaceCell())"''', depends-on = ["build"] }
+clean = "rm -rf build"
+
+[dependencies]
+cxx-compiler = "*"
+cmake = "*"
+ninja = "*"
+eigen = "*"
+python = ">=3.9"
+nanobind = "*"
+pip = "*"
