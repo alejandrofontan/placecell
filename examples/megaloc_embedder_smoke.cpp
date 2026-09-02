@@ -93,5 +93,32 @@ int main(int argc, char** argv)
     std::cout << "kernel " << kernel.rows() << "x" << kernel.cols()
               << ", max |kernel - pairwise cosine| = " << max_diff
               << (max_diff < 1e-5f ? " (OK)" : " (ERROR)") << std::endl;
-    return max_diff < 1e-5f ? 0 : 1;
+    if(max_diff >= 1e-5f)
+        return 1;
+
+    // Culling smoke (needs >= 3 views, the first two of the same place): gram-greedy
+    // with a mid tau should cull exactly one of the near-duplicate pair -- the other
+    // explains it -- and stop, since every remaining view is then poorly explained.
+    if(images.size() >= 3)
+    {
+        placecell::PlaceCell::CullParameters cull_params;
+        cull_params.max_unexplained = 0.5f;
+        cull_params.centred = false;      // 3 views is too few for stable centring
+        cull_params.min_keyframes = 1;
+        cull_params.protect_last = 1;
+        cull_params.protect_first = false;
+        const auto cull_report = store.cull_keyframes(
+            cull_params, [](placecell::PlaceCell::ExternalId) { return true; });
+        std::cout << "cull smoke: culled " << cull_report.culled.size()
+                  << " of " << cull_report.candidates << " candidates:";
+        for(const auto& culled : cull_report.culled)
+            std::printf(" [id %zu, unique info %.3f]", size_t(culled.id), double(culled.unique_information));
+        const bool ok = cull_report.culled.size() == 1
+                        && store.is_culled(cull_report.culled[0].id)
+                        && (cull_report.culled[0].id == 100 || cull_report.culled[0].id == 101);
+        std::cout << (ok ? " (OK)" : " (ERROR)") << std::endl;
+        if(!ok)
+            return 1;
+    }
+    return 0;
 }

@@ -35,8 +35,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <mutex>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <Eigen/Core>
 
@@ -82,12 +85,81 @@ public:
     // Drop every stored view and the kernel (host system reset).
     void clear();
 
+    // ---- Culling -----------------------------------------------------------------
+
+    // Per-view protection: a protected view is never proposed for culling but still
+    // acts as an explainer. Unknown ids are ignored (set) / not protected (get).
+    void set_protected(ExternalId id, bool value = true);
+    bool is_protected(ExternalId id) const;
+
+    // Record a view as removed OUTSIDE cull_keyframes (e.g. the host culled it by
+    // another rule): it keeps its kernel row and becomes culling history. Views culled
+    // through cull_keyframes' callback are recorded automatically.
+    void set_culled(ExternalId id);
+    bool is_culled(ExternalId id) const;
+
+    struct CullParameters
+    {
+        // Culling method; "gram-greedy" (the joint-information greedy rule on the
+        // Gram kernel) is the only one implemented.
+        std::string method{"gram-greedy"};
+        // tau: max unexplained information any view (alive or history) may be left with
+        float max_unexplained{0.1f};
+        // Double-centre the kernel over the usable views (Pearson correlation of the
+        // mean-centred descriptors; removes a common-mode similarity floor)
+        bool centred{true};
+        // Never cull below this many alive views (in scope)
+        int min_keyframes{10};
+        // Never cull the last n inserted views (insertion order; n >= 1 also protects
+        // the newest view)
+        int protect_last{1};
+        // Cap on culls per call (0 = unlimited)
+        int max_per_call{0};
+        // Never cull the first inserted view (it anchors the host's map)
+        bool protect_first{true};
+    };
+
+    struct CullReport
+    {
+        struct CulledView
+        {
+            ExternalId id;
+            float unique_information;         // v_i at the time it was culled
+            float worst_unexplained_after;    // max unexplained view right after the cull
+            int alive_after;                  // alive views in scope right after the cull
+        };
+        std::vector<CulledView> culled;
+        int views_total{0};                   // rows ever inserted (usable or not)
+        int candidates{0};                    // unprotected alive views in scope
+        int alive_after{0};                   // alive views in scope after the call
+        float worst_history{0.0f};            // max unexplained over the history rows
+        int history_over_budget{0};           // history rows above tau (tau was lowered)
+        bool reached_max_per_call{false};
+    };
+
+    // The host executes each cull and reports back: return true when the view was
+    // actually removed (it becomes history here), false to leave it alive and skip
+    // it for the rest of this call (e.g. the host deferred the erase).
+    using CullCallback = std::function<bool(ExternalId)>;
+
+    // Greedy joint-information culling on the kernel (see the .cpp for the maths).
+    // Alive views = stored, not culled; candidates = alive, unprotected, in scope.
+    // `local_window` (optional) restricts the marginalisation to those external ids
+    // (the host's covisibility window): candidates and explainers come from the
+    // window, and history is reduced to the rows whose best alive explainer (over the
+    // whole map) lies in it. The callback is invoked WITHOUT the internal lock held.
+    // Throws std::invalid_argument for an unknown method.
+    CullReport cull_keyframes(const CullParameters& parameters, const CullCallback& try_cull,
+                              const std::vector<ExternalId>* local_window = nullptr);
+
 private:
     mutable std::mutex mutex_;
     std::deque<Eigen::VectorXf> descriptors_;           // indexed by InternalId, append-only
     std::deque<ExternalId> external_ids_;               // InternalId -> ExternalId
     std::unordered_map<ExternalId, InternalId> ids_;
     Eigen::MatrixXf kernel_;                            // n x n, grown on add()
+    std::deque<char> culled_;                           // InternalId -> removed (history row)
+    std::deque<char> protected_;                        // InternalId -> never cull
 };
 
 } // namespace placecell
