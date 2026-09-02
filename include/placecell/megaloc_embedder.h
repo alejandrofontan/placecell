@@ -50,7 +50,10 @@ class MegaLocEmbedder {
         // Cosine similarity of two descriptors (double accumulation; 0 when empty or
         // of mismatched size). Descriptors are L2-normalised, so this is ~their dot
         // product, but the explicit normalisation keeps it exact under fp16 rounding.
-        static float cosine(const Eigen::VectorXf& a, const Eigen::VectorXf& b);
+        // Eigen::Ref accepts VectorXf, blocks, and Eigen::Map over external buffers
+        // (e.g. a std::vector<float>) without copying.
+        static float cosine(const Eigen::Ref<const Eigen::VectorXf>& a,
+                            const Eigen::Ref<const Eigen::VectorXf>& b);
 
     private:
         struct Impl;                    // forward declaration only

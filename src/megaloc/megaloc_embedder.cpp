@@ -60,7 +60,8 @@ namespace placecell {
         return impl_->engine.enginePath();
     }
 
-    float MegaLocEmbedder::cosine(const Eigen::VectorXf& a, const Eigen::VectorXf& b)
+    float MegaLocEmbedder::cosine(const Eigen::Ref<const Eigen::VectorXf>& a,
+                                  const Eigen::Ref<const Eigen::VectorXf>& b)
     {
         // Same semantics as TensorRTMegaLoc::cosine (parity for consumers migrating
         // from the wrapper): double accumulation, 0 on empty or mismatched sizes
