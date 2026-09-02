@@ -15,10 +15,14 @@
  * - The first construction for a given ONNX + precision builds the TensorRT engine
  *   (~1-2 min, benchmarks kernels on THIS GPU); the blob is cached next to the ONNX
  *   ('<onnx>.<precision>.engine') and later constructions load it in milliseconds.
+ *   The constructor also absorbs the one-time lazy CUDA/TensorRT warmup (a dummy
+ *   inference), so the first real embed() runs at steady-state speed.
  * - embed() expects BGR pixel order (cv::imread's native order); grayscale is
  *   replicated to 3 channels and BGRA drops alpha internally, but RGB input is the
  *   caller's responsibility to convert.
- * - NOT thread-safe: one execution context, callers serialise externally.
+ * - Thread-safe: embed() serialises internally on the single execution context, so
+ *   concurrent callers (e.g. a mapping thread and a relocalization query) need no
+ *   external lock. Calls block while another inference is in flight.
  */
 #pragma once
 
@@ -38,6 +42,15 @@ class MegaLocEmbedder {
 
         Eigen::VectorXf embed(const cv::Mat& image_bgr);
         int descriptor_dim() const;
+
+        // True if the engine came from the cache file, false if it was built now
+        bool loaded_from_cache() const;
+        const std::string& engine_path() const;
+
+        // Cosine similarity of two descriptors (double accumulation; 0 when empty or
+        // of mismatched size). Descriptors are L2-normalised, so this is ~their dot
+        // product, but the explicit normalisation keeps it exact under fp16 rounding.
+        static float cosine(const Eigen::VectorXf& a, const Eigen::VectorXf& b);
 
     private:
         struct Impl;                    // forward declaration only
