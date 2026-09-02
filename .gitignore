@@ -83,4 +83,3 @@ tools/megaloc/
 megaloc_models/
 *.onnx
 *.engine
-models/
