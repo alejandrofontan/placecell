@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`placecell` is a C++17 library (with Python bindings) for keyframe lifecycle management in VSLAM / 3D reconstruction: keyframe creation, connectivity, redundancy detection, and marginalization. It is currently a skeleton — `placecell::PlaceCell` holds a similarity kernel (`Eigen::MatrixXf` Gram matrix of view descriptors) and nothing else yet. There are no tests yet.
+`placecell` is a C++17 library (with Python bindings) for keyframe lifecycle management in VSLAM / 3D reconstruction: keyframe creation, connectivity, redundancy detection, and marginalization. Current state:
+
+- `placecell::PlaceCell` (core, Eigen-only): id-mapped, append-only store of global descriptors (`add(external_id, descriptor)` -> internal id; `descriptor(id)` returns a stable pointer) plus the similarity kernel over them (`kernel()`, Gram matrix grown incrementally on every add; rows are never removed — culled views stay as history). `external_ids()` maps kernel rows back to host ids; `clear()` resets everything. Thread-safe.
+- `placecell::MegaLocEmbedder` (megaloc module, `PLACECELL_WITH_MEGALOC=ON`): cv::Mat -> 8448-d MegaLoc descriptor via TensorRT (pimpl hides TensorRT/CUDA from the public header); engine built on first use and cached next to the ONNX.
+- `placecell::MegaLocPlaceCell` (megaloc module): PlaceCell + embedder; `add_image(id, cv::Mat)` = embed + store, idempotent.
+- Consumed by AllFeature-VSLAM as `Thirdparty/placecell` (System owns a `MegaLocPlaceCell`; keyframe descriptors and the VPR kernel live here, not in the SLAM code).
+
+The `megaloc` pixi environment provides CUDA/TensorRT/OpenCV; `pixi run -e megaloc build-megaloc` builds it, `download-models` fetches the ONNX from HF `vslamlab/megaloc-models`, and `examples/megaloc_embedder_smoke` is the store/kernel verification harness. There are no unit tests yet beyond that smoke example. The Python bindings still expose only the empty `PlaceCell()` constructor — NOT yet in sync with the C++ API.
 
 ## Build and run
 

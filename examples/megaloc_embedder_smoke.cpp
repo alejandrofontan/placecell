@@ -81,5 +81,17 @@ int main(int argc, char** argv)
     }
     std::cout << "store round-trip OK (" << store.size() << " views, unknown id -> "
               << (store.descriptor(9999) == nullptr ? "nullptr" : "ERROR") << ")" << std::endl;
-    return 0;
+
+    // The kernel placecell grew on add_image must reproduce the pairwise cosines
+    // (unit descriptors: dot == cosine) computed independently above.
+    const Eigen::MatrixXf kernel = store.kernel();
+    float max_diff = 0.0f;
+    for(size_t i = 0; i < descriptors.size(); i++)
+        for(size_t j = 0; j < descriptors.size(); j++)
+            max_diff = std::max(max_diff, std::abs(kernel(int(i), int(j))
+                                - placecell::MegaLocEmbedder::cosine(descriptors[i], descriptors[j])));
+    std::cout << "kernel " << kernel.rows() << "x" << kernel.cols()
+              << ", max |kernel - pairwise cosine| = " << max_diff
+              << (max_diff < 1e-5f ? " (OK)" : " (ERROR)") << std::endl;
+    return max_diff < 1e-5f ? 0 : 1;
 }
