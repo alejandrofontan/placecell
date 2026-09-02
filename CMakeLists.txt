@@ -30,6 +30,7 @@ if(PLACECELL_WITH_MEGALOC)
     add_library(placecell_megaloc
         src/megaloc/tensorrt_megaloc.cpp
         src/megaloc/megaloc_embedder.cpp
+        src/megaloc/megaloc_placecell.cpp
     )
     add_library(placecell::megaloc ALIAS placecell_megaloc)
 
