@@ -77,3 +77,10 @@ __pycache__/
 *.egg-info/
 dist/
 .venv/
+
+# MegaLoc: upstream clone + exported models/engines (see tools/export_megaloc.py)
+tools/megaloc/
+megaloc_models/
+*.onnx
+*.engine
+models/

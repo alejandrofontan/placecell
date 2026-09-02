@@ -1,9 +1,11 @@
 [workspace]
 authors = ["alejandrofontan <fontanvillacampa@gmail.com>"]
-channels = ["conda-forge"]
+channels = ["https://prefix.dev/conda-forge"]
 name = "placecell"
-platforms = ["linux-64"]
 version = "0.1.0"
+platforms = [
+    { name = "linux-64-cuda", platform = "linux-64", cuda = "12.0" },
+]
 
 [tasks]
 configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_BUILD_PYTHON=ON"
@@ -20,3 +22,57 @@ eigen = "*"
 python = ">=3.9"
 nanobind = "*"
 pip = "*"
+
+[environments]
+default = []
+megaloc = { features = ["megaloc"], solve-group = "megaloc" }
+export-megaloc = { features = ["export-megaloc", "megaloc"], solve-group = "megaloc" }
+
+[feature.megaloc]
+channels = ["https://repo.prefix.dev/spqr-tests"]
+platforms = ["linux-64-cuda"]
+
+[feature.megaloc.tasks]
+configure-megaloc = "cmake -S . -B build-megaloc -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_BUILD_PYTHON=ON"
+build-megaloc = { cmd = "cmake --build build-megaloc", depends-on = ["configure-megaloc"] }
+megaloc-smoke = { cmd = "./build-megaloc/examples/megaloc_test", depends-on = ["build-megaloc"] }
+
+[feature.megaloc.dependencies]
+# CUDA Build Tools
+cuda-compiler = "*"
+cuda-version = "12.6.*"
+cuda-cudart-dev = "*"
+cuda-crt = "*"
+libcusparse-dev = "*"
+cuda-driver-dev = "*"
+cuda-nvcc = "*"
+cuda-nvrtc-dev = "*"
+cuda-nvtx = "*"
+cuda-nvtx-dev = "*"
+cuda-nvml-dev = "*"
+cuda-profiler-api = "*"
+
+# Tensor-RT Tools
+tensorrt-cxx = "*"
+tensorrt-cxx-builder = "*"
+tensorrt-cxx-full = "*"
+
+# 3D / geometry / eval / video
+opencv = "4.12.*"
+yaml-cpp = "*"
+
+[feature.export-megaloc]
+platforms = ["linux-64-cuda"]
+
+[feature.export-megaloc.dependencies]
+# Torch libraries
+pytorch-gpu = "*"
+torchvision = "*"
+
+# ONNX libraries
+onnx = "*"
+onnxruntime = "*"
+
+huggingface_hub = "*"
+git = "*"
+numpy = "<2"
