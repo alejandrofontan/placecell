@@ -34,7 +34,10 @@ platforms = ["linux-64-cuda"]
 
 [feature.megaloc.tasks]
 configure-megaloc = "cmake -S . -B build-megaloc -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_BUILD_PYTHON=ON"
-build-megaloc = { cmd = "cmake --build build-megaloc", depends-on = ["configure-megaloc"] }
+# Snapshot of the model repo (ONNX + sidecar yamls) into megaloc_models/; skipped once
+# an ONNX is present there (also the case right after a local tools/export_megaloc.py run)
+download-models = { cmd = "hf download vslamlab/megaloc-models --local-dir megaloc_models", outputs = ["megaloc_models/*.onnx"] }
+build-megaloc = { cmd = "cmake --build build-megaloc", depends-on = ["configure-megaloc", "download-models"] }
 megaloc-smoke = { cmd = "./build-megaloc/examples/megaloc_test", depends-on = ["build-megaloc"] }
 
 [feature.megaloc.dependencies]
@@ -61,8 +64,18 @@ tensorrt-cxx-full = "*"
 opencv = "4.12.*"
 yaml-cpp = "*"
 
+# `hf download` for download-models
+huggingface_hub = "*"
+
 [feature.export-megaloc]
 platforms = ["linux-64-cuda"]
+
+[feature.export-megaloc.tasks]
+# Export the ONNX + sidecar, then publish them (requires `hf auth login`; creates the
+# repo on first use). Only *.onnx / *.yaml are uploaded -- never the .cache dir or the
+# machine-specific *.engine blobs.
+export-models = "python tools/export_megaloc.py"
+upload-models = { cmd = "hf upload vslamlab/megaloc-models megaloc_models . --include='*.onnx' --include='*.yaml'" }
 
 [feature.export-megaloc.dependencies]
 # Torch libraries
