@@ -81,7 +81,9 @@ class TensorRTMegaLoc
     int inputHeight() const { return inputH_; }
 
   private:
-    /** TensorRT's only output channel; lower the filter to kINFO when debugging a build. */
+    /** TensorRT's only output channel, forwarded to the placecell Logger (component
+     *  "TensorRT": errors/warnings at their level, kINFO at debug, kVERBOSE at trace —
+     *  raise PLACECELL_VERBOSITY to debug when diagnosing an engine build). */
     class Logger final : public nvinfer1::ILogger
     {
       public:

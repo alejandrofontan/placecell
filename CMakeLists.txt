@@ -52,6 +52,10 @@ endif()
 # ---- Library ----------------------------------------------------------------
 add_library(placecell
     src/placecell.cpp
+    src/placecell_events.cpp
+    src/log.cpp
+    src/profiler.cpp
+    src/recorder.cpp
 )
 add_library(placecell::placecell ALIAS placecell)
 

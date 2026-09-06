@@ -17,6 +17,11 @@
  * This core is Eigen-only by design: descriptors come in already computed. Image
  * frontends (MegaLocPlaceCell) live in optional modules.
  *
+ * Besides the store and the culler, unexplained_information() answers the dual
+ * question for a view that is NOT stored: how much of it the alive views cannot
+ * explain (the information a keyframe made from it would add) — a read-only query
+ * on the same kernel the culler marginalises.
+ *
  * Contracts:
  * - add() is idempotent: an id that already exists keeps its stored descriptor and
  *   returns its existing internal id.
@@ -29,6 +34,12 @@
  * - A kernel entry is NaN when the two descriptors' sizes mismatch.
  * - clear() drops everything (store and kernel) — for a host system reset.
  * - Thread-safe: all methods serialise internally.
+ *
+ * Diagnostics (see log.h / profiler.h / recorder.h): every store owns a Profiler (timing
+ * of the main entry points) and a Recorder (query / cull / decision history for the
+ * plots); the Logger is process-wide. Options selects what is on; dump() writes the
+ * kernel, the recorder's CSVs and the profile samples into a directory for offline
+ * inspection (tools/plot_placecell.py).
  */
 #pragma once
 
@@ -37,11 +48,16 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <Eigen/Core>
+
+#include "placecell/log.h"
+#include "placecell/profiler.h"
+#include "placecell/recorder.h"
 
 namespace placecell
 {
@@ -53,10 +69,33 @@ public:
     using InternalId = std::size_t;
     static constexpr InternalId invalid_id = static_cast<InternalId>(-1);
 
+    struct Options
+    {
+        // Process-wide log verbosity to apply at construction; PLACECELL_VERBOSITY in
+        // the environment wins over this, an explicit Logger::set_level() over both
+        std::optional<LogLevel> verbosity{};
+        bool profile{true};                 // time the main entry points (Profiler)
+        bool record{true};                  // keep the query / cull history (Recorder)
+        bool report_on_destruction{false};  // print the profile table when the store dies
+        std::string name{"PlaceCell"};      // label in the profile report
+    };
+
     PlaceCell();
+    explicit PlaceCell(const Options& options);
     virtual ~PlaceCell();
     PlaceCell(const PlaceCell&) = delete;
     PlaceCell& operator=(const PlaceCell&) = delete;
+
+    const Options& options() const { return options_; }
+    Profiler& profiler() { return profiler_; }
+    const Profiler& profiler() const { return profiler_; }
+    Recorder& recorder() { return recorder_; }
+    const Recorder& recorder() const { return recorder_; }
+    // Print the profile table through the Logger (bypasses the verbosity gate)
+    void print_profile() const;
+    // kernel.npy, kernel_centred.npy, views.csv (internal id, external id, culled,
+    // protected) + Recorder::dump_csv + Profiler::dump_csv into `directory`
+    void dump(const std::string& directory) const;
 
     // Store a descriptor under the host's id and grow the kernel by its row (O(n)
     // dot products); returns its internal id. Idempotent: a known id returns its
@@ -82,8 +121,53 @@ public:
     // Snapshot of the row -> external id mapping (index = internal id).
     std::vector<ExternalId> external_ids() const;
 
+    // The kernel double-centred over the usable views and renormalised to unit diagonal
+    // — exactly what cull_keyframes marginalises with parameters.centred (identity to
+    // kernel() below 3 usable views). Snapshot; O(n^2).
+    Eigen::MatrixXf centred_kernel() const;
+
+    // Everything a plot needs, taken under one lock so the pieces agree
+    struct Snapshot
+    {
+        Eigen::MatrixXf kernel;               // raw, or centred when requested
+        std::vector<ExternalId> ids;          // index = internal id
+        std::vector<char> culled;             // history rows
+        std::vector<char> protected_views;
+        bool centred{false};
+    };
+    Snapshot snapshot(bool centred = false) const;
+
     // Drop every stored view and the kernel (host system reset).
     void clear();
+
+    // ---- Information of a view not in the store ----------------------------------
+
+    struct Information
+    {
+        // v_x = K_xx - k_xA K_AA^-1 k_Ax in [0,1]: 1 = nothing alive resembles the view,
+        // 0 = the alive views explain it completely. NaN when the query cannot be
+        // compared (descriptor-size mismatch with the store).
+        float unexplained{1.0f};
+        // Alive views the query was marginalised over (0 -> unexplained is 1)
+        int explainers{0};
+        // Most similar explainer and its similarity on the kernel used (centred or raw)
+        ExternalId best_explainer{0};
+        float best_similarity{0.0f};
+    };
+
+    // Unexplained information of `descriptor` given the alive views (or, with
+    // `window`, the alive views among those ids) — the information a keyframe made
+    // from this view would add to them. Read-only: nothing is stored, the kernel is
+    // untouched. Same kernel as cull_keyframes: with `centred` the stored views are
+    // double-centred over every stored view (alive and history) exactly as the culler
+    // does and the query is centred out-of-sample against that same mean, so on a
+    // raw kernel the value equals the unique information v_i the view would have
+    // right after add() (Schur identity; on a centred kernel up to the mean shift
+    // its own insertion causes). Cost: one dot product per stored view plus a solve
+    // of the |explainers| x |explainers| system.
+    Information unexplained_information(const Eigen::VectorXf& descriptor,
+                                        const std::vector<ExternalId>* window = nullptr,
+                                        bool centred = true) const;
 
     // ---- Culling -----------------------------------------------------------------
 
@@ -135,6 +219,10 @@ public:
         float worst_history{0.0f};            // max unexplained over the history rows
         int history_over_budget{0};           // history rows above tau (tau was lowered)
         bool reached_max_per_call{false};
+        // Unique information v_i = 1/(K_AA^-1)_ii of every alive view in scope after the
+        // call (NaN where the inverse is not positive) — what the next call would score
+        std::vector<ExternalId> alive_ids;
+        std::vector<float> alive_unique_information;
     };
 
     // The host executes each cull and reports back: return true when the view was
@@ -152,12 +240,43 @@ public:
     CullReport cull_keyframes(const CullParameters& parameters, const CullCallback& try_cull,
                               const std::vector<ExternalId>* local_window = nullptr);
 
+protected:
+    // For const entry points in subclasses that still time themselves (the profiler is
+    // mutable state by design: timing a const query does not change the store)
+    Profiler& mutable_profiler() const { return profiler_; }
+
 private:
+    // The maths (unexplained_information / cull_keyframes) call these once per event;
+    // they fan out to the Recorder and the Logger (src/placecell_events.cpp)
+    void on_add(ExternalId id, InternalId internal, bool size_mismatch) const;
+    void on_query(const Information& information, int stored, int window_size, bool centred, double ms) const;
+    void on_cull_call(const CullParameters& parameters, const CullReport& report, bool local, double ms) const;
+
+    Information compute_unexplained_information(const Eigen::VectorXf& descriptor,
+                                                const std::vector<ExternalId>* window, bool centred,
+                                                int& stored_out) const;
+    // Double-centre `kernel` over the rows flagged usable and renormalise to unit
+    // diagonal (no-op below 3 usable rows)
+    static void centre_kernel(Eigen::MatrixXf& kernel, const std::vector<char>& usable);
+
+    Options options_;
+    mutable Profiler profiler_;
+    mutable Recorder recorder_;
+    mutable int last_history_over_budget_{-1};   // for the once-per-change over-budget line
+
     mutable std::mutex mutex_;
     std::deque<Eigen::VectorXf> descriptors_;           // indexed by InternalId, append-only
     std::deque<ExternalId> external_ids_;               // InternalId -> ExternalId
     std::unordered_map<ExternalId, InternalId> ids_;
     Eigen::MatrixXf kernel_;                            // n x n, grown on add()
+    // Centring statistics of the kernel, maintained by add() so unexplained_information()
+    // never has to sweep the n x n kernel: per-row sums and the total sum (double).
+    std::deque<double> kernel_row_sums_;
+    double kernel_total_sum_{0.0};
+    // Descriptor size of the first stored view and whether a different size ever
+    // arrived (NaN kernel entries): then no query can be compared.
+    Eigen::Index descriptor_size_{0};
+    bool size_mismatch_{false};
     std::deque<char> culled_;                           // InternalId -> removed (history row)
     std::deque<char> protected_;                        // InternalId -> never cull
 };

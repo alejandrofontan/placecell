@@ -20,6 +20,8 @@
 #include <opencv2/imgproc.hpp>
 #include <yaml-cpp/yaml.h>
 
+#include "placecell/log.h"
+
 namespace megaloc
 {
 
@@ -35,8 +37,24 @@ void cudaCheck(cudaError_t status, const char* what)
 
 void TensorRTMegaLoc::Logger::log(Severity severity, const char* msg) noexcept
 {
-    if (severity <= Severity::kWARNING)
-        std::printf("[TensorRT] %s\n", msg);
+    // TensorRT's own messages, mapped onto placecell's levels: errors and warnings are
+    // always worth seeing, the (very chatty) build/info output only at debug/trace.
+    switch (severity)
+    {
+        case Severity::kINTERNAL_ERROR:
+        case Severity::kERROR:
+            PLACECELL_ERROR("TensorRT", msg);
+            break;
+        case Severity::kWARNING:
+            PLACECELL_WARN("TensorRT", msg);
+            break;
+        case Severity::kINFO:
+            PLACECELL_DEBUG("TensorRT", msg);
+            break;
+        case Severity::kVERBOSE:
+            PLACECELL_TRACE("TensorRT", msg);
+            break;
+    }
 }
 
 TensorRTMegaLoc::TensorRTMegaLoc(const std::string& onnxPath, const std::string& precision,
@@ -59,10 +77,8 @@ TensorRTMegaLoc::TensorRTMegaLoc(const std::string& onnxPath, const std::string&
     }
     else
     {
-        std::printf("[TensorRTMegaLoc] no usable engine cache, building from %s (takes 1-2 "
-                    "minutes)...\n",
-                    onnxPath.c_str());
-        std::fflush(stdout);
+        PLACECELL_INFO("TensorRTMegaLoc", "no usable engine cache, building from " << onnxPath
+                       << " (takes 1-2 minutes)...");
         buildEngine(onnxPath);
         if (!tryLoadEngine(onnxPath))
             throw std::runtime_error("TensorRTMegaLoc: freshly built engine failed to load: " +
@@ -133,7 +149,7 @@ void TensorRTMegaLoc::buildEngine(const std::string& onnxPath)
     if (precision_ == "fp16")
     {
         if (!builder->platformHasFastFp16())
-            std::printf("[TensorRTMegaLoc] warning: no fast fp16 on this GPU, building anyway\n");
+            PLACECELL_WARN("TensorRTMegaLoc", "no fast fp16 on this GPU, building anyway");
         config->setFlag(nvinfer1::BuilderFlag::kFP16);
 
         // Mixed precision: fp16 is allowed in the ViT backbone (the bulk of the compute),
@@ -162,9 +178,8 @@ void TensorRTMegaLoc::buildEngine(const std::string& onnxPath)
             layer->setPrecision(nvinfer1::DataType::kFLOAT);
             ++pinned;
         }
-        std::printf("[TensorRTMegaLoc] mixed precision: %d backbone layers fp16-eligible, "
-                    "%d aggregator layers pinned to fp32 (of %d)\n",
-                    backbone, pinned, network->getNbLayers());
+        PLACECELL_INFO("TensorRTMegaLoc", "mixed precision: " << backbone << " backbone layers fp16-eligible, "
+                       << pinned << " aggregator layers pinned to fp32 (of " << network->getNbLayers() << ")");
     }
 
     auto blob = std::unique_ptr<nvinfer1::IHostMemory>(
@@ -177,8 +192,8 @@ void TensorRTMegaLoc::buildEngine(const std::string& onnxPath)
     out.write(static_cast<const char*>(blob->data()), static_cast<std::streamsize>(blob->size()));
     if (!out)
         throw std::runtime_error("TensorRTMegaLoc: cannot write engine cache " + enginePath_);
-    std::printf("[TensorRTMegaLoc] engine cached: %s (%.1f MB)\n", enginePath_.c_str(),
-                static_cast<double>(blob->size()) / (1024.0 * 1024.0));
+    PLACECELL_INFO("TensorRTMegaLoc", "engine cached: " << enginePath_ << " ("
+                   << static_cast<double>(blob->size()) / (1024.0 * 1024.0) << " MB)");
 }
 
 bool TensorRTMegaLoc::tryLoadEngine(const std::string& onnxPath)
@@ -193,8 +208,7 @@ bool TensorRTMegaLoc::tryLoadEngine(const std::string& onnxPath)
     const auto engineTime = std::filesystem::last_write_time(enginePath_, ec);
     if (!ec && onnxTime > engineTime)
     {
-        std::printf("[TensorRTMegaLoc] engine cache %s is older than the ONNX - rebuilding\n",
-                    enginePath_.c_str());
+        PLACECELL_INFO("TensorRTMegaLoc", "engine cache " << enginePath_ << " is older than the ONNX - rebuilding");
         return false;
     }
     const auto size = static_cast<size_t>(in.tellg());

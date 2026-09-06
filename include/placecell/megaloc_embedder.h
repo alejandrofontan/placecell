@@ -2,8 +2,9 @@
  * Module: placecell - megaloc_embedder.h
  * - Author: Alejandro Fontan Villacampa
  * - Assisted by: Claude (Fable 5)
- * - Version: 1.0
+ * - Version: 1.1
  * - Created: 2026-09-02
+ * - Updated: 2026-09-05
  * - License: Apache-2.0 (MegaLoc itself is MIT)
  *
  * MegaLocEmbedder: image -> MegaLoc global descriptor (8448-d, L2-normalised), the
@@ -23,6 +24,9 @@
  * - Thread-safe: embed() serialises internally on the single execution context, so
  *   concurrent callers (e.g. a mapping thread and a relocalization query) need no
  *   external lock. Calls block while another inference is in flight.
+ * - Diagnostics: engine build/load and the backend's TensorRT messages go through the
+ *   placecell Logger (component "MegaLocEmbedder" / "TensorRT"); every embed() is timed
+ *   in the embedder's own Profiler under "embed" (size_a = width, size_b = height).
  */
 #pragma once
 
@@ -31,6 +35,8 @@
 
 #include <Eigen/Core>
 #include <opencv2/core.hpp>
+
+#include "placecell/profiler.h"
 
 namespace placecell {
 class MegaLocEmbedder {
@@ -46,6 +52,9 @@ class MegaLocEmbedder {
         // True if the engine came from the cache file, false if it was built now
         bool loaded_from_cache() const;
         const std::string& engine_path() const;
+
+        Profiler& profiler();
+        const Profiler& profiler() const;
 
         // Cosine similarity of two descriptors (double accumulation; 0 when empty or
         // of mismatched size). Descriptors are L2-normalised, so this is ~their dot

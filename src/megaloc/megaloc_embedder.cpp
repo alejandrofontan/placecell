@@ -2,8 +2,9 @@
  * Module: placecell - megaloc_embedder.cpp
  * - Author: Alejandro Fontan Villacampa
  * - Assisted by: Claude (Fable 5)
- * - Version: 1.0
+ * - Version: 1.1
  * - Created: 2026-09-02
+ * - Updated: 2026-09-05
  * - License: Apache-2.0
  */
 #include "placecell/megaloc_embedder.h"
@@ -11,6 +12,7 @@
 #include <mutex>
 #include <vector>
 
+#include "placecell/log.h"
 #include "tensorrt_megaloc.hpp"
 
 namespace placecell {
@@ -21,14 +23,21 @@ namespace placecell {
 
         megaloc::TensorRTMegaLoc engine;
         std::mutex mutex;   // TensorRTMegaLoc is not thread-safe: one execution context
+        Profiler profiler{"MegaLocEmbedder"};
     };
 
     MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path, const std::string& precision)
     : impl_(std::make_unique<Impl>(onnx_path, precision))
     {
+        impl_->profiler.declare({"embed"});
         // Absorb the one-time lazy CUDA/TensorRT warmup here (constructor is already
         // the slow path) rather than on the first real embed()
+        const Profiler::Stopwatch warmup;
         (void)impl_->engine.infer(cv::Mat::zeros(480, 640, CV_8UC3));
+        PLACECELL_INFO("MegaLocEmbedder", "engine " << (impl_->engine.loadedFromCache() ? "loaded" : "built")
+                       << " (" << precision << ", " << impl_->engine.descriptorDim() << "-d, input "
+                       << impl_->engine.inputWidth() << "x" << impl_->engine.inputHeight() << "): "
+                       << impl_->engine.enginePath() << "; warmup " << warmup.ms() << " ms");
     }
 
     // Defined here, below Impl's definition, so unique_ptr<Impl> destroys a complete type
@@ -36,6 +45,8 @@ namespace placecell {
 
     Eigen::VectorXf MegaLocEmbedder::embed(const cv::Mat& image_bgr)
     {
+        Profiler::Scope timer(impl_->profiler, "embed");
+        timer.set_sizes(image_bgr.cols, image_bgr.rows);
         std::vector<float> descriptor;
         {
             std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -58,6 +69,16 @@ namespace placecell {
     const std::string& MegaLocEmbedder::engine_path() const
     {
         return impl_->engine.enginePath();
+    }
+
+    Profiler& MegaLocEmbedder::profiler()
+    {
+        return impl_->profiler;
+    }
+
+    const Profiler& MegaLocEmbedder::profiler() const
+    {
+        return impl_->profiler;
     }
 
     float MegaLocEmbedder::cosine(const Eigen::Ref<const Eigen::VectorXf>& a,

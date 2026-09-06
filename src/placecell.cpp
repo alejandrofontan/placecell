@@ -9,6 +9,9 @@
 #include "placecell/placecell.h"
 
 #include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <unordered_set>
@@ -19,35 +22,99 @@
 namespace placecell
 {
 
-PlaceCell::PlaceCell() = default;
-PlaceCell::~PlaceCell() = default;
+PlaceCell::PlaceCell() : PlaceCell(Options{}) {}
+
+PlaceCell::PlaceCell(const Options& options)
+    : options_(options), profiler_(options.name)
+{
+    if(options_.verbosity)
+        Logger::instance().set_level_unless_environment(*options_.verbosity);
+    profiler_.set_enabled(options_.profile);
+    recorder_.set_enabled(options_.record);
+    // Fixed report order: main entry points, then cull_keyframes' stages as sub-rows
+    profiler_.declare({"add", "unexplained_information", "cull_keyframes", "cull_keyframes/snapshot+centring",
+                       "cull_keyframes/inverse", "cull_keyframes/greedy", "cull_keyframes/host_callback"});
+}
+
+PlaceCell::~PlaceCell()
+{
+    if(options_.report_on_destruction)
+        print_profile();
+}
+
+void PlaceCell::print_profile() const
+{
+    const std::string report = profiler_.report();
+    if(!report.empty())
+        Logger::instance().print(report);
+}
+
+void PlaceCell::dump(const std::string& directory) const
+{
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path dir(directory);
+    const Snapshot raw = snapshot(false);
+    save_npy((dir / "kernel.npy").string(), raw.kernel);
+    save_npy((dir / "kernel_centred.npy").string(), centred_kernel());
+    {
+        std::ofstream out(dir / "views.csv");
+        out << "internal_id,external_id,culled,protected\n";
+        for(std::size_t i = 0; i < raw.ids.size(); i++)
+            out << i << "," << raw.ids[i] << "," << int(raw.culled[i]) << "," << int(raw.protected_views[i]) << "\n";
+    }
+    recorder_.dump_csv(directory);
+    profiler_.dump_csv((dir / "profile.csv").string());
+    PLACECELL_INFO("dump", raw.ids.size() << " views, " << recorder_.query_count() << " queries, "
+                           << recorder_.cull_count() << " culls written to " << directory);
+}
 
 PlaceCell::InternalId PlaceCell::add(const ExternalId id, Eigen::VectorXf descriptor)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const auto [it, inserted] = ids_.try_emplace(id, descriptors_.size());
-    if(!inserted)
-        return it->second;
-
-    // Grow the kernel by this view's row/column of dot products (double accumulation;
-    // unit descriptors make the dot the cosine). NaN marks a descriptor-size mismatch.
-    const int n = int(descriptors_.size());
-    kernel_.conservativeResize(n + 1, n + 1);
-    for(int i = 0; i < n; i++)
+    Profiler::Scope timer(profiler_, "add");   // size_a = stored views before the add
+    InternalId internal = invalid_id;
+    bool size_mismatch = false;
     {
-        float s = std::numeric_limits<float>::quiet_NaN();
-        if(descriptors_[i].size() == descriptor.size())
-            s = float(descriptor.cast<double>().dot(descriptors_[i].cast<double>()));
-        kernel_(i, n) = s;
-        kernel_(n, i) = s;
-    }
-    kernel_(n, n) = 1.0f;
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto [it, inserted] = ids_.try_emplace(id, descriptors_.size());
+        if(!inserted)
+        {
+            timer.cancel();
+            return it->second;
+        }
 
-    descriptors_.push_back(std::move(descriptor));
-    external_ids_.push_back(id);
-    culled_.push_back(0);
-    protected_.push_back(0);
-    return it->second;
+        // Grow the kernel by this view's row/column of dot products (double accumulation;
+        // unit descriptors make the dot the cosine). NaN marks a descriptor-size mismatch.
+        const int n = int(descriptors_.size());
+        timer.set_sizes(n);
+        if(n == 0)
+            descriptor_size_ = descriptor.size();
+        else if(descriptor.size() != descriptor_size_)
+            size_mismatch_ = size_mismatch = true;
+
+        kernel_.conservativeResize(n + 1, n + 1);
+        double row_sum = 1.0;   // the diagonal entry
+        for(int i = 0; i < n; i++)
+        {
+            float s = std::numeric_limits<float>::quiet_NaN();
+            if(descriptors_[i].size() == descriptor.size())
+                s = float(descriptor.cast<double>().dot(descriptors_[i].cast<double>()));
+            kernel_(i, n) = s;
+            kernel_(n, i) = s;
+            kernel_row_sums_[i] += double(s);
+            row_sum += double(s);
+        }
+        kernel_(n, n) = 1.0f;
+        kernel_row_sums_.push_back(row_sum);
+        kernel_total_sum_ += 2.0 * row_sum - 1.0;   // the new row and column share the diagonal
+
+        descriptors_.push_back(std::move(descriptor));
+        external_ids_.push_back(id);
+        culled_.push_back(0);
+        protected_.push_back(0);
+        internal = it->second;
+    }
+    on_add(id, internal, size_mismatch);
+    return internal;
 }
 
 bool PlaceCell::has(const ExternalId id) const
@@ -88,15 +155,80 @@ std::vector<PlaceCell::ExternalId> PlaceCell::external_ids() const
     return std::vector<ExternalId>(external_ids_.begin(), external_ids_.end());
 }
 
+void PlaceCell::centre_kernel(Eigen::MatrixXf& kernel, const std::vector<char>& usable)
+{
+    // Double-centre over the usable set, K_c = J S J with J = I - 11^T/m, then renormalise
+    // to unit diagonal (in double): the correlation of the mean-centred descriptors.
+    std::vector<int> u;
+    for(int i = 0; i < int(usable.size()); i++)
+        if(usable[i])
+            u.push_back(i);
+    const int m = int(u.size());
+    if(m < 3)
+        return;
+    Eigen::MatrixXd S(m, m);
+    for(int a = 0; a < m; a++)
+        for(int b = 0; b < m; b++)
+            S(a, b) = double(kernel(u[a], u[b]));
+    const Eigen::VectorXd row_mean = S.rowwise().mean();
+    const double total_mean = row_mean.mean();
+    Eigen::MatrixXd C = S;
+    C.colwise() -= row_mean;
+    C.rowwise() -= row_mean.transpose();
+    C.array() += total_mean;
+    const Eigen::VectorXd d = C.diagonal().cwiseMax(1e-9).cwiseSqrt();
+    for(int a = 0; a < m; a++)
+        for(int b = 0; b < m; b++)
+            kernel(u[a], u[b]) = float(C(a, b) / (d(a) * d(b)));
+}
+
+PlaceCell::Snapshot PlaceCell::snapshot(const bool centred) const
+{
+    Snapshot snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        snapshot.kernel = kernel_;
+        snapshot.ids.assign(external_ids_.begin(), external_ids_.end());
+        snapshot.culled.assign(culled_.begin(), culled_.end());
+        snapshot.protected_views.assign(protected_.begin(), protected_.end());
+    }
+    if(centred)
+    {
+        const int n = int(snapshot.ids.size());
+        std::vector<char> usable(n, 1);
+        for(int i = 0; i < n; i++)
+            for(int j = 0; j < n; j++)
+                if(std::isnan(snapshot.kernel(i, j))) { usable[i] = 0; break; }
+        centre_kernel(snapshot.kernel, usable);
+        snapshot.centred = true;
+    }
+    return snapshot;
+}
+
+Eigen::MatrixXf PlaceCell::centred_kernel() const
+{
+    return snapshot(true).kernel;
+}
+
 void PlaceCell::clear()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    descriptors_.clear();
-    external_ids_.clear();
-    ids_.clear();
-    kernel_.resize(0, 0);
-    culled_.clear();
-    protected_.clear();
+    std::size_t dropped = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        dropped = descriptors_.size();
+        descriptors_.clear();
+        external_ids_.clear();
+        ids_.clear();
+        kernel_.resize(0, 0);
+        kernel_row_sums_.clear();
+        kernel_total_sum_ = 0.0;
+        descriptor_size_ = 0;
+        size_mismatch_ = false;
+        culled_.clear();
+        protected_.clear();
+    }
+    last_history_over_budget_ = -1;
+    PLACECELL_INFO("clear", "store reset (" << dropped << " views dropped; profile and history kept)");
 }
 
 void PlaceCell::set_protected(const ExternalId id, const bool value)
@@ -127,6 +259,160 @@ bool PlaceCell::is_culled(const ExternalId id) const
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = ids_.find(id);
     return it != ids_.end() && culled_[it->second] != 0;
+}
+
+PlaceCell::Information PlaceCell::unexplained_information(const Eigen::VectorXf& descriptor,
+                                                          const std::vector<ExternalId>* window,
+                                                          const bool centred) const
+{
+    // Instrumented entry point; the maths is compute_unexplained_information below.
+    // Profile sizes: size_a = stored views, size_b = explainers.
+    Profiler::Scope timer(profiler_, "unexplained_information");
+    int stored = 0;
+    const Information information = compute_unexplained_information(descriptor, window, centred, stored);
+    timer.set_sizes(stored, information.explainers);
+    on_query(information, stored, window ? int(window->size()) : -1, centred, timer.elapsed_ms());
+    return information;
+}
+
+PlaceCell::Information PlaceCell::compute_unexplained_information(const Eigen::VectorXf& descriptor,
+                                                                  const std::vector<ExternalId>* window,
+                                                                  const bool centred, int& stored_out) const
+{
+    // v_x = K_xx - k_xA K_AA^-1 k_Ax for a view x that is not stored, over the alive
+    // explainers A (all alive views, or the alive views named by `window`). Same kernel
+    // as cull_keyframes: raw dot products, or the double-centred correlation over U =
+    // every stored view (alive AND history),
+    //     C_ij = S_ij - r_i - r_j + t,   c_ij = C_ij / sqrt(C_ii C_jj),
+    // with r the row means and t the total mean of the stored kernel — both kept
+    // incrementally by add(), so this never sweeps the n x n kernel. The query is
+    // centred out of sample against the same statistics (r_x = mean of its dots with
+    // U; C_xx = k_xx - 2 r_x + t), i.e. as if it were an extra row that does not
+    // contribute to the means.
+    //
+    // Locking: the snapshot (explainer rows, the query's dots) is taken under the lock —
+    // the dots are the expensive part (one per stored view) but they read append-only
+    // storage the culler also reads, and add() is rare compared with queries. The solve
+    // runs outside the lock.
+    Information information{};
+    std::vector<int> explainers;             // internal ids of the explainers
+    Eigen::VectorXd k;                       // query dots with every stored view (u = internal id)
+    Eigen::MatrixXd K_AA;                    // kernel over the explainers
+    Eigen::VectorXd k_xA;                    // query vs explainers
+    double k_xx = 0.0;
+    std::vector<ExternalId> explainer_ids;
+    bool use_centred = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const int n = int(descriptors_.size());
+        stored_out = n;
+        if(n == 0)
+            return information;              // nothing alive: unexplained = 1, explainers = 0
+        if(size_mismatch_ || descriptor.size() != descriptor_size_)
+        {
+            information.unexplained = std::numeric_limits<float>::quiet_NaN();
+            return information;
+        }
+
+        // Explainers: alive views, restricted to the window when given
+        if(window)
+        {
+            explainers.reserve(window->size());
+            for(const ExternalId id : *window)
+            {
+                const auto it = ids_.find(id);
+                if(it != ids_.end() && culled_[it->second] == 0)
+                    explainers.push_back(int(it->second));
+            }
+            std::sort(explainers.begin(), explainers.end());
+            explainers.erase(std::unique(explainers.begin(), explainers.end()), explainers.end());
+        }
+        else
+        {
+            for(int i = 0; i < n; i++)
+                if(culled_[i] == 0)
+                    explainers.push_back(i);
+        }
+        if(explainers.empty())
+            return information;
+
+        // Query dots with every stored view (needed for the explainers and, when
+        // centring, for the query's row mean over the whole store)
+        const Eigen::VectorXd x = descriptor.cast<double>();
+        k_xx = x.squaredNorm();
+        use_centred = centred && n >= 3;     // the culler centres only over >= 3 views
+        k.resize(n);
+        if(use_centred)
+        {
+            for(int i = 0; i < n; i++)
+                k(i) = x.dot(descriptors_[i].cast<double>());
+        }
+        else
+        {
+            k.setZero();
+            for(const int i : explainers)
+                k(i) = x.dot(descriptors_[i].cast<double>());
+        }
+
+        const int na = int(explainers.size());
+        K_AA.resize(na, na);
+        k_xA.resize(na);
+        explainer_ids.resize(na);
+        for(int a = 0; a < na; a++)
+            explainer_ids[a] = external_ids_[explainers[a]];
+
+        if(use_centred)
+        {
+            const double t = kernel_total_sum_ / (double(n) * double(n));
+            const double r_x = k.sum() / double(n);
+            const double C_xx = std::max(k_xx - 2.0 * r_x + t, 1e-9);
+            auto r = [&](const int i) { return kernel_row_sums_[i] / double(n); };
+            auto C_diag = [&](const int i) { return std::max(double(kernel_(i, i)) - 2.0 * r(i) + t, 1e-9); };
+            std::vector<double> d(na);
+            for(int a = 0; a < na; a++)
+                d[a] = std::sqrt(C_diag(explainers[a]));
+            const double d_x = std::sqrt(C_xx);
+            for(int a = 0; a < na; a++)
+            {
+                const int i = explainers[a];
+                k_xA(a) = (k(i) - r_x - r(i) + t) / (d_x * d[a]);
+                for(int b = 0; b < na; b++)
+                {
+                    const int j = explainers[b];
+                    K_AA(a, b) = (double(kernel_(i, j)) - r(i) - r(j) + t) / (d[a] * d[b]);
+                }
+            }
+            k_xx = 1.0;                      // the query's centred, normalised self-similarity
+        }
+        else
+        {
+            for(int a = 0; a < na; a++)
+            {
+                const int i = explainers[a];
+                k_xA(a) = k(i);
+                for(int b = 0; b < na; b++)
+                    K_AA(a, b) = double(kernel_(i, explainers[b]));
+            }
+        }
+    }
+
+    // Marginalise outside the lock (same jitter as the culler)
+    const int na = int(explainers.size());
+    constexpr double jitter = 1e-6;
+    for(int a = 0; a < na; a++)
+        K_AA(a, a) += jitter;
+    const Eigen::VectorXd w = K_AA.ldlt().solve(k_xA);
+    const double v = k_xx - k_xA.dot(w);
+
+    information.unexplained = float(std::min(std::max(v, 0.0), 1.0));
+    information.explainers = na;
+    int best = 0;
+    for(int a = 1; a < na; a++)
+        if(k_xA(a) > k_xA(best))
+            best = a;
+    information.best_explainer = explainer_ids[best];
+    information.best_similarity = float(k_xA(best));
+    return information;
 }
 
 PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters,
@@ -172,10 +458,26 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     // views whose best alive explainer (over ALL alive views) lies in it — so far-away
     // history cannot veto a local cull, and far-away views cannot explain a local one.
     if(parameters.method != "gram-greedy")
+    {
+        PLACECELL_ERROR("cull_keyframes", "unknown method '" << parameters.method << "' (options: gram-greedy)");
         throw std::invalid_argument("placecell::PlaceCell::cull_keyframes: unknown method '"
                                     + parameters.method + "' (options: gram-greedy)");
+    }
 
+    // Profile: the whole call (host callback time excluded) plus its stages as sub-rows.
+    // Sizes: size_a = alive views in scope, size_b = history rows in scope.
+    Profiler::Scope timer(profiler_, "cull_keyframes");
+    Profiler::Stopwatch stage;
+    double callback_ms = 0.0;
     CullReport report{};
+    const bool local = local_window != nullptr;
+    // Every early return still reports the call (with the stage timing so far)
+    struct ReportOnExit
+    {
+        const PlaceCell& cell; const CullParameters& parameters; const CullReport& report;
+        bool local; Profiler::Scope& timer;
+        ~ReportOnExit() { cell.on_cull_call(parameters, report, local, timer.elapsed_ms()); }
+    } report_on_exit{*this, parameters, report, local, timer};
 
     // Snapshot under the lock; the greedy loop and the callback run WITHOUT it
     Eigen::MatrixXf similarity;
@@ -199,29 +501,14 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     for(int i = 0; i < n; i++)
         for(int j = 0; j < n; j++)
             if(std::isnan(similarity(i, j))) { usable[i] = 0; break; }
+    if(std::count(usable.begin(), usable.end(), char(1)) < n)
+        PLACECELL_WARN_ONCE("cull_keyframes", (n - std::count(usable.begin(), usable.end(), char(1)))
+                            << " of " << n << " views have a NaN kernel row (descriptor-size mismatch) and are ignored");
 
-    if(parameters.centred){
-        // Double-centre over the usable set, then renormalise to unit diagonal (in double)
-        std::vector<int> u;
-        for(int i = 0; i < n; i++) if(usable[i]) u.push_back(i);
-        const int m = int(u.size());
-        if(m >= 3){
-            Eigen::MatrixXd S(m, m);
-            for(int a = 0; a < m; a++)
-                for(int b = 0; b < m; b++)
-                    S(a, b) = double(similarity(u[a], u[b]));
-            const Eigen::VectorXd row_mean = S.rowwise().mean();
-            const double total_mean = row_mean.mean();
-            Eigen::MatrixXd C = S;
-            C.colwise() -= row_mean;
-            C.rowwise() -= row_mean.transpose();
-            C.array() += total_mean;
-            Eigen::VectorXd d = C.diagonal().cwiseMax(1e-9).cwiseSqrt();
-            for(int a = 0; a < m; a++)
-                for(int b = 0; b < m; b++)
-                    similarity(u[a], u[b]) = float(C(a, b) / (d(a) * d(b)));
-        }
-    }
+    if(parameters.centred)
+        centre_kernel(similarity, usable);
+    profiler_.record("cull_keyframes/snapshot+centring", stage.ms(), n);
+    stage.restart();
 
     for(int i = 0; i < n; i++){
         if(!usable[i]) continue;
@@ -248,6 +535,7 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     }
     const int na = int(alive.size());
     report.alive_after = na;
+    timer.set_sizes(na, std::int64_t(history.size()));
     if(na <= parameters.min_keyframes)
         return report;
 
@@ -279,6 +567,11 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
         for(int b = 0; b < na; b++)
             K_AA(a, b) = double(similarity(alive[a], alive[b])) + (a == b ? jitter : 0.0);
     Eigen::MatrixXd M = K_AA.ldlt().solve(Eigen::MatrixXd::Identity(na, na));
+    profiler_.record("cull_keyframes/inverse", stage.ms(), na);
+    stage.restart();
+    if(history.empty() && parameters.centred && !local)
+        PLACECELL_WARN_ONCE("cull_keyframes", "centring set == alive set (no history yet): K_AA is rank-deficient "
+                            "and the unique-information scores of this call are jitter-scale (see issue #5)");
 
     // History rows are stored in a growable list; a culled view joins it during the loop
     std::vector<Eigen::VectorXd> W_rows;      // W_h over the alive columns (stale columns masked by `removed`)
@@ -329,7 +622,12 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
 
         // Hand the cull to the host (lock NOT held). A refusal (e.g. a deferred
         // erase) leaves the view alive and out of the running for this call.
-        if(!try_cull(row_ids[alive[best]])){
+        const Profiler::Stopwatch callback_watch;
+        const bool culled_by_host = try_cull(row_ids[alive[best]]);
+        callback_ms += callback_watch.ms();
+        if(!culled_by_host){
+            PLACECELL_DEBUG("cull_keyframes", "host refused to cull view " << row_ids[alive[best]]
+                            << " (unique information " << best_v << "); skipped for this call");
             candidate[best] = 0;
             continue;
         }
@@ -365,6 +663,21 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     report.worst_history = float(worst);
     report.history_over_budget = over_budget;
     report.reached_max_per_call = max_per_call > 0 && num_culled >= max_per_call;
+
+    // Unique information of what stays alive (the scores the next call would start from)
+    report.alive_ids.reserve(std::size_t(num_alive));
+    report.alive_unique_information.reserve(std::size_t(num_alive));
+    for(int a = 0; a < na; a++){
+        if(removed[a]) continue;
+        report.alive_ids.push_back(row_ids[alive[a]]);
+        report.alive_unique_information.push_back(
+            M(a, a) > 0.0 ? float(1.0 / M(a, a)) : std::numeric_limits<float>::quiet_NaN());
+    }
+
+    profiler_.record("cull_keyframes/greedy", stage.ms() - callback_ms, na, std::int64_t(W_rows.size()));
+    if(num_culled > 0 || callback_ms > 0.0)
+        profiler_.record("cull_keyframes/host_callback", callback_ms, num_culled);
+    timer.exclude(callback_ms);
     return report;
 }
 
