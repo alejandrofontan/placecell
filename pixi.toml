@@ -11,7 +11,11 @@ platforms = [
 configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_BUILD_PYTHON=ON"
 build = { cmd = "cmake --build build", depends-on = ["configure"] }
 example = { cmd = "./build/examples/placecell_example", depends-on = ["build"] }
+# GPU-free end-to-end exercise of the core + log/profile/record managers (exit 1 on a mismatch);
+# dumps kernel .npy + CSVs into placecell_demo_out/ (plot them with tools/plot_placecell.py)
+demo = { cmd = "./build/examples/synthetic_demo placecell_demo_out", depends-on = ["build"] }
 python-smoke = { cmd = '''python -c "import sys; sys.path.insert(0, 'build/python'); import _placecell; print(_placecell.PlaceCell())"''', depends-on = ["build"] }
+plot = "python tools/plot_placecell.py placecell_demo_out"
 clean = "rm -rf build"
 
 [dependencies]
@@ -22,6 +26,9 @@ eigen = "*"
 python = ">=3.9"
 nanobind = "*"
 pip = "*"
+# tools/plot_placecell.py (offline plots of a PlaceCell::dump() directory)
+numpy = "*"
+matplotlib = "*"
 
 [environments]
 default = []
@@ -33,7 +40,9 @@ channels = ["https://repo.prefix.dev/spqr-tests"]
 platforms = ["linux-64-cuda"]
 
 [feature.megaloc.tasks]
-configure-megaloc = "cmake -S . -B build-megaloc -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_BUILD_PYTHON=ON"
+# The megaloc env carries OpenCV, so the viz module (heatmap / information plots) builds here too
+configure-megaloc = "cmake -S . -B build-megaloc -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_WITH_VIZ=ON -DPLACECELL_BUILD_PYTHON=ON"
+demo-viz = { cmd = "./build-megaloc/examples/synthetic_demo placecell_demo_out --windows", depends-on = ["build-megaloc"] }
 # Snapshot of the model repo (ONNX + sidecar yamls) into megaloc_models/; skipped once
 # an ONNX is present there (also the case right after a local tools/export_megaloc.py run)
 download-models = { cmd = "hf download vslamlab/megaloc-models --local-dir megaloc_models", outputs = ["megaloc_models/*.onnx"] }

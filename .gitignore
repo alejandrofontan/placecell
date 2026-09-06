@@ -83,3 +83,6 @@ tools/megaloc/
 megaloc_models/
 *.onnx
 *.engine
+
+# synthetic_demo / PlaceCell::dump() output
+placecell_demo_out/

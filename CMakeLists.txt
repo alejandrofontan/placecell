@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(PLACECELL_BUILD_EXAMPLES "Build the example executables" ON)
 option(PLACECELL_BUILD_PYTHON "Build the Python bindings (nanobind)" OFF)
 option(PLACECELL_WITH_MEGALOC "Build the MegaLoc embedder (CUDA + TensorRT)" OFF)
+option(PLACECELL_WITH_VIZ "Build the visualization module (OpenCV)" OFF)
 
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
@@ -66,6 +67,21 @@ target_include_directories(placecell PUBLIC
 target_link_libraries(placecell PUBLIC Eigen3::Eigen)
 target_compile_options(placecell PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(placecell PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# ---- Visualization (OpenCV) --------------------------------------------------
+# Kernel heatmap, unexplained-information history and alive-information strip, rendered
+# to cv::Mat from a PlaceCell + its Recorder; optional windows via cv::imshow.
+if(PLACECELL_WITH_VIZ)
+    find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui imgcodecs)
+    add_library(placecell_viz
+        src/viz/viz.cpp
+    )
+    add_library(placecell::viz ALIAS placecell_viz)
+    target_include_directories(placecell_viz PUBLIC ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(placecell_viz PUBLIC placecell::placecell ${OpenCV_LIBS})
+    target_compile_options(placecell_viz PRIVATE -Wall -Wextra -Wpedantic)
+    set_target_properties(placecell_viz PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
 # ---- Examples ---------------------------------------------------------------
 if(PLACECELL_BUILD_EXAMPLES)
