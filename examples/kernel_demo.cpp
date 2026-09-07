@@ -12,17 +12,21 @@
  * stated convention, initialise a PlaceCell with set_kernel (row i -> id i, all views
  * alive), print what set_kernel had to fix, run the information culler offline over
  * every view (the offline keyframe selection: which frames survive at a given tau),
- * and dump the store for tools/plot_placecell.py. GPU-free.
+ * dump the store for tools/plot_placecell.py, and write the surviving frames as
+ * <out>/rgb.csv (the rows of the sequence's rgb.csv whose matrix row survived — row i of
+ * the matrix is data row i of the csv it was computed on). GPU-free.
  *
  * Usage:
  *   kernel_demo <matrix.npy> [--kind similarity|squared-euclidean|cosine-distance|euclidean]
  *               [--tau T] [--min-keyframes N] [--raw] [--clip] [--no-psd-check]
- *               [--out <dir>] [--verbosity off|error|warn|info|debug|trace]
+ *               [--out <dir>] [--rgb-csv <file>] [--verbosity off|error|warn|info|debug|trace]
  *
  * Defaults: --kind squared-euclidean (VPR-LAB), --tau 0.3, --min-keyframes 5, centred
- * kernel, no clipping, PSD check on, --out placecell_kernel_out. Exit code 1 when the
- * store disagrees with the matrix (size, ids, kernel round trip) or a cull result is
- * inconsistent.
+ * kernel, no clipping, PSD check on, --out placecell_kernel_out; --rgb-csv defaults to
+ * <sequence>/rgb.csv for a VSLAM-LAB <sequence>/vpr-lab/<matrix>.npy (then rgb_raw.csv,
+ * if rgb.csv was already downsampled and its row count no longer matches). Exit code 1
+ * when the store disagrees with the matrix (size, ids, kernel round trip), a cull result
+ * is inconsistent, or an explicit --rgb-csv cannot be used.
  *
  * Note (issue #5): with every view alive and no history, the centred kernel is rank
  * n-1 and the very first cull's unique-information score is jitter-scale; the culler
@@ -32,6 +36,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -46,6 +52,7 @@ int main(int argc, char** argv)
 {
     std::string matrix_path;
     std::string output_dir = "placecell_kernel_out";
+    std::string rgb_csv_path;   // empty: look next to the matrix (<sequence>/rgb.csv, rgb_raw.csv)
     placecell::DistanceKind kind = placecell::DistanceKind::squared_euclidean;
     float tau = 0.3f;
     int min_keyframes = 5;
@@ -71,6 +78,7 @@ int main(int argc, char** argv)
         else if(std::strcmp(argv[i], "--clip") == 0) kernel_options.clip_to_psd = true;
         else if(std::strcmp(argv[i], "--no-psd-check") == 0) kernel_options.psd_check = false;
         else if(std::strcmp(argv[i], "--out") == 0) output_dir = next("--out");
+        else if(std::strcmp(argv[i], "--rgb-csv") == 0) rgb_csv_path = next("--rgb-csv");
         else if(std::strcmp(argv[i], "--verbosity") == 0)
         {
             const auto level = placecell::Logger::parse(next("--verbosity"));
@@ -83,7 +91,7 @@ int main(int argc, char** argv)
     if(matrix_path.empty())
     {
         std::fprintf(stderr, "usage: kernel_demo <matrix.npy> [--kind K] [--tau T] [--min-keyframes N] [--raw] [--clip] "
-                             "[--no-psd-check] [--out dir] [--verbosity L]\n");
+                             "[--no-psd-check] [--out dir] [--rgb-csv file] [--verbosity L]\n");
         return 1;
     }
     if(!options.verbosity)
@@ -192,6 +200,59 @@ int main(int argc, char** argv)
 
     cell.print_profile();
     cell.dump(output_dir);
+
+    // ---- Surviving frames as an rgb.csv ------------------------------------------------
+    // Row i of the matrix is data row i of the rgb.csv the matrix was computed on, so the
+    // surviving views map straight onto csv rows. Source: --rgb-csv, or (VSLAM-LAB layout
+    // <sequence>/vpr-lab/D.npy) <sequence>/rgb.csv, falling back to rgb_raw.csv when
+    // rgb.csv was already downsampled and no longer has one row per matrix row.
+    {
+        namespace fs = std::filesystem;
+        std::vector<std::string> candidates;
+        if(!rgb_csv_path.empty())
+            candidates.push_back(rgb_csv_path);
+        else
+        {
+            const fs::path sequence = fs::absolute(matrix_path).parent_path().parent_path();
+            candidates.push_back((sequence / "rgb.csv").string());
+            candidates.push_back((sequence / "rgb_raw.csv").string());
+        }
+        std::string header, used;
+        std::vector<std::string> rows;
+        for(const std::string& candidate : candidates)
+        {
+            std::ifstream in(candidate);
+            if(!in)
+                continue;
+            std::string line;
+            header.clear();
+            rows.clear();
+            if(!std::getline(in, header))
+                continue;
+            while(std::getline(in, line))
+                if(!line.empty() && line.find_first_not_of(" \t\r") != std::string::npos)
+                    rows.push_back(line);
+            if(Eigen::Index(rows.size()) == n) { used = candidate; break; }
+            std::fprintf(stderr, "  %s has %zu data rows, the matrix %ld: not the csv this matrix was computed on\n",
+                         candidate.c_str(), rows.size(), long(n));
+        }
+        if(used.empty())
+        {
+            if(!rgb_csv_path.empty()) { std::fprintf(stderr, "rgb.csv not written: --rgb-csv %s unusable\n", rgb_csv_path.c_str()); ok = false; }
+            else std::cout << "  no rgb.csv with " << n << " rows found next to the matrix (pass --rgb-csv); surviving csv not written" << std::endl;
+        }
+        else
+        {
+            const fs::path out_path = fs::path(output_dir) / "rgb.csv";
+            std::ofstream out(out_path);
+            out << header << "\n";
+            int written = 0;
+            for(Eigen::Index i = 0; i < n; i++)
+                if(!cell.is_culled(ids[std::size_t(i)])) { out << rows[std::size_t(i)] << "\n"; written++; }
+            if(!out || written != alive) { std::fprintf(stderr, "failed writing %s\n", out_path.c_str()); ok = false; }
+            std::cout << "  surviving frames: " << written << " of " << n << " rows of " << used << " -> " << out_path.string() << std::endl;
+        }
+    }
 #ifdef PLACECELL_HAS_VIZ
     placecell::viz::Visualizer::Options viz_options;
     viz_options.kernel.centred = centred;

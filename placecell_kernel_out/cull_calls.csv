@@ -1,0 +1,2 @@
+index,time_s,tau,centred,local,views_total,candidates,culled,alive_after,history_over_budget,worst_history,ms
+0,0.611470229,0.300000012,1,0,1180,1178,211,969,2,0.429427564,452.43899

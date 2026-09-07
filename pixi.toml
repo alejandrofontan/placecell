@@ -16,6 +16,7 @@ example = { cmd = "./build/examples/placecell_example", depends-on = ["build"] }
 demo = { cmd = "./build/examples/synthetic_demo placecell_demo_out", depends-on = ["build"] }
 # Kernel-only store from a precomputed pairwise matrix, e.g. VPR-LAB's <sequence>/vpr-lab/D.npy
 # (faiss squared L2 -> --kind squared-euclidean, the default): pixi run kernel-demo <matrix.npy> [--tau T] [--out dir]
+# Also writes <out>/rgb.csv with the frames that survive the offline cull (rows of <sequence>/rgb.csv, or --rgb-csv)
 kernel-demo = { cmd = "./build/examples/kernel_demo", depends-on = ["build"] }
 python-smoke = { cmd = '''python -c "import sys; sys.path.insert(0, 'build/python'); import _placecell; print(_placecell.PlaceCell())"''', depends-on = ["build"] }
 plot = "python tools/plot_placecell.py placecell_demo_out"

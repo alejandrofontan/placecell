@@ -19,7 +19,7 @@ Install [pixi](https://pixi.sh), then from the repo root:
 pixi run build          # configure + compile library, examples, and Python module
 pixi run example        # run examples/main.cpp
 pixi run demo           # GPU-free synthetic run: queries, insertions, culls, profile table, dump
-pixi run kernel-demo <matrix.npy> [--kind K] [--tau T]   # kernel-only store from a precomputed pairwise matrix
+pixi run kernel-demo <matrix.npy> [--kind K] [--tau T]   # kernel-only store from a precomputed pairwise matrix; offline cull -> <out>/rgb.csv of surviving frames
 pixi run plot           # matplotlib plots of that dump (tools/plot_placecell.py)
 pixi run python-smoke   # import the Python module from the build tree
 pixi run clean          # remove the build directory
