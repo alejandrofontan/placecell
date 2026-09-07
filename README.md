@@ -22,6 +22,7 @@ pixi run demo           # GPU-free synthetic run: queries, insertions, culls, pr
 pixi run kernel-demo <matrix.npy> [--kind K] [--tau T]   # kernel-only store from a precomputed pairwise matrix; offline cull -> <out>/rgb.csv of surviving frames
 pixi run colmap-kernel <colmap_model_dir> --rgb-csv <sequence>/rgb.csv   # shared-information kernel of a COLMAP reconstruction -> kernel.npy + ids.csv
 pixi run compare-kernels <D.npy> <colmap_kernel_dir> [--centred]         # both kernels on the registered images: heatmaps, difference, scatter
+pixi run colmap-demo <colmap_model_dir> --rgb-csv <sequence>/rgb.csv [--tau 0.9]   # kernel -> offline cull -> rgb.csv of surviving frames, with checks
 pixi run plot           # matplotlib plots of that dump (tools/plot_placecell.py)
 pixi run python-smoke   # import the Python module from the build tree
 pixi run clean          # remove the build directory

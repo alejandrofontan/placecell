@@ -24,6 +24,9 @@ colmap-kernel = "python tools/colmap_information_kernel.py"
 # Both kernels over the images COLMAP registered: heatmaps (min-max 0-1), difference, scatter + correlation stats
 # pixi run compare-kernels <D.npy> <colmap_kernel_dir> [--centred] [--out fig.png] [--show]
 compare-kernels = "python tools/compare_kernels.py"
+# Offline keyframe selection from a COLMAP model (kernel -> cull -> rgb.csv of survivors + checks), the
+# counterpart of kernel-demo for the geometric kernel: pixi run colmap-demo <model_dir> --rgb-csv <sequence>/rgb.csv [--tau 0.9]
+colmap-demo = { cmd = "python tools/colmap_kernel_demo.py", depends-on = ["build"] }
 python-smoke = { cmd = '''python -c "import sys; sys.path.insert(0, 'build/python'); import _placecell; print(_placecell.PlaceCell())"''', depends-on = ["build"] }
 plot = "python tools/plot_placecell.py placecell_demo_out"
 clean = "rm -rf build"
