@@ -8,12 +8,9 @@
  */
 #include "placecell/recorder.h"
 
-#include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <sstream>
 
 namespace placecell
 {
@@ -227,36 +224,6 @@ void Recorder::clear()
     // thresholds are configuration, not data: keep the latest so plots stay annotated
     if(thresholds_.size() > 1)
         thresholds_.erase(thresholds_.begin(), thresholds_.end() - 1);
-}
-
-void save_npy(const std::string& path, const Eigen::MatrixXf& matrix)
-{
-    // NPY format 1.0: magic, version, little-endian uint16 header length, then a Python
-    // dict literal padded with spaces so that the data starts on a 64-byte boundary.
-    std::ostringstream dict;
-    dict << "{'descr': '<f4', 'fortran_order': False, 'shape': (" << matrix.rows() << ", " << matrix.cols() << "), }";
-    std::string header = dict.str();
-    const std::size_t preamble = 6 + 2 + 2;   // magic + version + header length
-    std::size_t padding = 64 - ((preamble + header.size() + 1) % 64);
-    if(padding == 64)
-        padding = 0;
-    header.append(padding, ' ');
-    header.push_back('\n');
-
-    std::ofstream out(path, std::ios::binary);
-    if(!out)
-        return;
-    const unsigned char magic[8] = {0x93, 'N', 'U', 'M', 'P', 'Y', 1, 0};
-    out.write(reinterpret_cast<const char*>(magic), 8);
-    const std::uint16_t length = static_cast<std::uint16_t>(header.size());
-    const unsigned char length_le[2] = {static_cast<unsigned char>(length & 0xFF),
-                                        static_cast<unsigned char>((length >> 8) & 0xFF)};
-    out.write(reinterpret_cast<const char*>(length_le), 2);
-    out.write(header.data(), std::streamsize(header.size()));
-    // C order: row by row (Eigen's default storage is column-major)
-    const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> row_major = matrix;
-    out.write(reinterpret_cast<const char*>(row_major.data()),
-              std::streamsize(sizeof(float) * std::size_t(row_major.size())));
 }
 
 } // namespace placecell

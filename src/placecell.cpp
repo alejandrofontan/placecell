@@ -32,8 +32,9 @@ PlaceCell::PlaceCell(const Options& options)
     profiler_.set_enabled(options_.profile);
     recorder_.set_enabled(options_.record);
     // Fixed report order: main entry points, then cull_keyframes' stages as sub-rows
-    profiler_.declare({"add", "unexplained_information", "cull_keyframes", "cull_keyframes/snapshot+centring",
-                       "cull_keyframes/inverse", "cull_keyframes/greedy", "cull_keyframes/host_callback"});
+    profiler_.declare({"add", "set_kernel", "unexplained_information", "cull_keyframes",
+                       "cull_keyframes/snapshot+centring", "cull_keyframes/inverse", "cull_keyframes/greedy",
+                       "cull_keyframes/host_callback"});
 }
 
 PlaceCell::~PlaceCell()
@@ -73,6 +74,18 @@ PlaceCell::InternalId PlaceCell::add(const ExternalId id, Eigen::VectorXf descri
     Profiler::Scope timer(profiler_, "add");   // size_a = stored views before the add
     InternalId internal = invalid_id;
     bool size_mismatch = false;
+    bool refused = false;   // kernel-only store: no descriptors to take the new row's dots against
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        refused = kernel_only_;
+    }
+    if(refused)
+    {
+        timer.cancel();
+        PLACECELL_ERROR("add", "view " << id << " refused: the store is kernel-only (set_kernel), "
+                        "descriptors cannot be added to it");
+        return invalid_id;
+    }
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto [it, inserted] = ids_.try_emplace(id, descriptors_.size());
@@ -126,8 +139,111 @@ bool PlaceCell::has(const ExternalId id) const
 const Eigen::VectorXf* PlaceCell::descriptor(const ExternalId id) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    if(kernel_only_)
+        return nullptr;
     const auto it = ids_.find(id);
     return it == ids_.end() ? nullptr : &descriptors_[it->second];
+}
+
+bool PlaceCell::kernel_only() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return kernel_only_;
+}
+
+PlaceCell::KernelReport PlaceCell::set_kernel(const Eigen::MatrixXf& similarity, const std::vector<ExternalId>& ids)
+{
+    return set_kernel(similarity, ids, KernelOptions());
+}
+
+PlaceCell::KernelReport PlaceCell::set_kernel(const Eigen::MatrixXf& similarity, const std::vector<ExternalId>& ids,
+                                              const KernelOptions& options)
+{
+    // Profile sizes: size_a = views. The decomposition (psd_check / clip_to_psd) is
+    // the cost here, O(n^3); everything else is O(n^2).
+    Profiler::Scope timer(profiler_, "set_kernel");
+    const Eigen::Index n = similarity.rows();
+    if(n == 0 || similarity.cols() != n)
+        throw std::invalid_argument("placecell::PlaceCell::set_kernel: similarity must be a non-empty square matrix (got "
+                                    + std::to_string(similarity.rows()) + " x " + std::to_string(similarity.cols()) + ")");
+    if(!ids.empty() && Eigen::Index(ids.size()) != n)
+        throw std::invalid_argument("placecell::PlaceCell::set_kernel: " + std::to_string(ids.size()) + " ids for a "
+                                    + std::to_string(n) + " x " + std::to_string(n) + " kernel");
+    if(!ids.empty())
+    {
+        std::unordered_set<ExternalId> unique(ids.begin(), ids.end());
+        if(Eigen::Index(unique.size()) != n)
+            throw std::invalid_argument("placecell::PlaceCell::set_kernel: duplicate ids");
+    }
+    if(similarity.hasNaN())
+        throw std::invalid_argument("placecell::PlaceCell::set_kernel: the similarity has NaN entries");
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(!external_ids_.empty())
+            throw std::logic_error("placecell::PlaceCell::set_kernel: the store is not empty (" + std::to_string(external_ids_.size())
+                                   + " views) - call clear() first");
+    }
+    timer.set_sizes(n);
+
+    // Fix-ups in double: symmetrise, unit diagonal, (optional) PSD projection
+    KernelReport report{};
+    report.views = int(n);
+    Eigen::MatrixXd S = similarity.cast<double>();
+    report.max_asymmetry = float((S - S.transpose()).cwiseAbs().maxCoeff());
+    report.max_diagonal_deviation = float((S.diagonal().array() - 1.0).abs().maxCoeff());
+    if(options.symmetrise)
+        S = (0.5 * (S + S.transpose())).eval();
+    if(options.unit_diagonal)
+        S.diagonal().setOnes();
+    if(options.psd_check || options.clip_to_psd)
+    {
+        // SelfAdjointEigenSolver reads the lower triangle: exact for a symmetrised
+        // kernel, the lower triangle's spectrum otherwise
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigen(
+            S, options.clip_to_psd ? Eigen::ComputeEigenvectors : Eigen::EigenvaluesOnly);
+        const Eigen::VectorXd& values = eigen.eigenvalues();
+        report.min_eigenvalue = float(values.minCoeff());
+        report.max_eigenvalue = float(values.maxCoeff());
+        report.negative_eigenvalues = int((values.array() < 0.0).count());
+        if(options.clip_to_psd && report.negative_eigenvalues > 0)
+        {
+            const Eigen::VectorXd clipped = values.cwiseMax(0.0);
+            S = eigen.eigenvectors() * clipped.asDiagonal() * eigen.eigenvectors().transpose();
+            if(options.unit_diagonal)
+            {
+                // Correlation-style renormalisation keeps PSD (D^-1/2 S D^-1/2)
+                const Eigen::VectorXd d = S.diagonal().cwiseMax(1e-12).cwiseSqrt().cwiseInverse();
+                S = d.asDiagonal() * S * d.asDiagonal();
+                S.diagonal().setOnes();
+            }
+            report.clipped = true;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(!external_ids_.empty())   // a concurrent add() slipped in while we decomposed
+            throw std::logic_error("placecell::PlaceCell::set_kernel: the store was filled concurrently - call clear() first");
+        kernel_ = S.cast<float>();
+        // Centring statistics as add() maintains them: per-row sums and the total sum
+        const Eigen::VectorXd row_sums = S.rowwise().sum();
+        kernel_row_sums_.assign(row_sums.data(), row_sums.data() + n);
+        kernel_total_sum_ = S.sum();
+        for(Eigen::Index i = 0; i < n; i++)
+        {
+            const ExternalId id = ids.empty() ? ExternalId(i) : ids[std::size_t(i)];
+            external_ids_.push_back(id);
+            ids_.emplace(id, InternalId(i));
+            culled_.push_back(0);
+            protected_.push_back(0);
+        }
+        descriptor_size_ = 0;
+        size_mismatch_ = false;
+        kernel_only_ = true;
+    }
+    report.ms = timer.elapsed_ms();
+    on_set_kernel(report, options);
+    return report;
 }
 
 PlaceCell::InternalId PlaceCell::internal_id(const ExternalId id) const
@@ -140,7 +256,7 @@ PlaceCell::InternalId PlaceCell::internal_id(const ExternalId id) const
 std::size_t PlaceCell::size() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return descriptors_.size();
+    return external_ids_.size();   // == descriptors_.size() unless the store is kernel-only
 }
 
 Eigen::MatrixXf PlaceCell::kernel() const
@@ -224,6 +340,7 @@ void PlaceCell::clear()
         kernel_total_sum_ = 0.0;
         descriptor_size_ = 0;
         size_mismatch_ = false;
+        kernel_only_ = false;
         culled_.clear();
         protected_.clear();
     }
@@ -304,11 +421,11 @@ PlaceCell::Information PlaceCell::compute_unexplained_information(const Eigen::V
     bool use_centred = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        const int n = int(descriptors_.size());
+        const int n = int(external_ids_.size());
         stored_out = n;
         if(n == 0)
             return information;              // nothing alive: unexplained = 1, explainers = 0
-        if(size_mismatch_ || descriptor.size() != descriptor_size_)
+        if(kernel_only_ || size_mismatch_ || descriptor.size() != descriptor_size_)
         {
             information.unexplained = std::numeric_limits<float>::quiet_NaN();
             return information;

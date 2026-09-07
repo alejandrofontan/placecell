@@ -15,6 +15,7 @@
 #include <cmath>
 #include <iomanip>
 #include <sstream>
+#include <string>
 
 namespace placecell
 {
@@ -37,6 +38,30 @@ void PlaceCell::on_add(const ExternalId id, const InternalId internal, const boo
     PLACECELL_DEBUG("add", "view " << id << " stored as row " << internal);
 }
 
+void PlaceCell::on_set_kernel(const KernelReport& report, const KernelOptions& options) const
+{
+    std::ostringstream line;
+    line << report.views << " views from a host kernel (" << fixed3(report.ms) << "ms): max asymmetry "
+         << fixed3(report.max_asymmetry) << (options.symmetrise ? " (symmetrised)" : "")
+         << ", max |diag-1| " << fixed3(report.max_diagonal_deviation) << (options.unit_diagonal ? " (set to 1)" : "");
+    if(!std::isnan(report.min_eigenvalue))
+        line << ", eigenvalues [" << fixed3(report.min_eigenvalue) << ", " << fixed3(report.max_eigenvalue) << "]"
+             << (report.negative_eigenvalues > 0 ? " with " + std::to_string(report.negative_eigenvalues) + " negative" : "")
+             << (report.clipped ? " (clipped to PSD)" : "");
+    else
+        line << ", spectrum not checked";
+    PLACECELL_INFO("set_kernel", line.str());
+
+    if(report.max_asymmetry > options.asymmetry_warn)
+        PLACECELL_WARN("set_kernel", "the supplied kernel is asymmetric (max |S_ij - S_ji| = " << fixed3(report.max_asymmetry)
+                       << " > " << fixed3(options.asymmetry_warn) << ")"
+                       << (options.symmetrise ? "; the average of S and S^T was stored" : "; stored as is"));
+    if(report.negative_eigenvalues > 0 && !report.clipped)
+        PLACECELL_WARN("set_kernel", report.negative_eigenvalues << " negative eigenvalues (smallest "
+                       << fixed3(report.min_eigenvalue) << "): the kernel is not PSD, unique-information scores of "
+                       "cull_keyframes may degrade (issue #3); KernelOptions::clip_to_psd projects it");
+}
+
 void PlaceCell::on_query(const Information& information, const int stored, const int window_size,
                          const bool centred, const double ms) const
 {
@@ -51,7 +76,8 @@ void PlaceCell::on_query(const Information& information, const int stored, const
     recorder_.record_query(query);
 
     if(std::isnan(information.unexplained))
-        PLACECELL_WARN_ONCE("unexplained_information", "query descriptor size does not match the store: NaN returned");
+        PLACECELL_WARN_ONCE("unexplained_information", "the query cannot be compared with the store (descriptor-size "
+                            "mismatch, or a kernel-only store without descriptors): NaN returned");
     PLACECELL_TRACE("unexplained_information", "v=" << fixed3(information.unexplained)
                     << " explainers=" << information.explainers << "/" << stored
                     << (window_size >= 0 ? " window=" + std::to_string(window_size) : std::string())

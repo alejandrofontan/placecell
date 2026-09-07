@@ -57,6 +57,7 @@ add_library(placecell
     src/log.cpp
     src/profiler.cpp
     src/recorder.cpp
+    src/kernel_io.cpp
 )
 add_library(placecell::placecell ALIAS placecell)
 

@@ -144,6 +144,46 @@ int main(int argc, char** argv)
         ok = false;
     }
 
+    // ---- Kernel-only twin (set_kernel) -----------------------------------------------------
+    // A second store initialised from this store's kernel + ids, with the same views culled,
+    // must give the same kernel (raw and centred) and the same unique-information scores
+    // when the culler scores it (callback refuses every cull, so neither store changes).
+    if(cell.size() >= 3)
+    {
+        placecell::PlaceCell twin(options);
+        placecell::PlaceCell::KernelOptions kernel_options;
+        kernel_options.psd_check = false;   // a Gram matrix of unit vectors is PSD by construction
+        const std::vector<placecell::PlaceCell::ExternalId> ids = cell.external_ids();
+        const auto report = twin.set_kernel(cell.kernel(), ids, kernel_options);
+        for(const auto id : ids)
+            if(cell.is_culled(id))
+                twin.set_culled(id);
+        if(report.views != int(ids.size()) || twin.size() != cell.size() || !twin.kernel_only())
+        { std::fprintf(stderr, "twin: size/report mismatch\n"); ok = false; }
+        if((twin.kernel() - cell.kernel()).cwiseAbs().maxCoeff() > 1e-6f)
+        { std::fprintf(stderr, "twin: raw kernel differs\n"); ok = false; }
+        if((twin.centred_kernel() - cell.centred_kernel()).cwiseAbs().maxCoeff() > 1e-5f)
+        { std::fprintf(stderr, "twin: centred kernel differs\n"); ok = false; }
+        if(twin.descriptor(ids.front()) != nullptr || twin.add(ids.back() + 1, view_at(0, 0.0f)) != placecell::PlaceCell::invalid_id
+           || !std::isnan(twin.unexplained_information(view_at(0, 0.0f)).unexplained))
+        { std::fprintf(stderr, "twin: kernel-only rules not enforced\n"); ok = false; }
+        auto refuse = [](placecell::PlaceCell::ExternalId) { return false; };
+        const auto scores_cell = cell.cull_keyframes(cull_parameters, refuse);
+        const auto scores_twin = twin.cull_keyframes(cull_parameters, refuse);
+        if(scores_cell.alive_ids != scores_twin.alive_ids || !scores_cell.culled.empty() || !scores_twin.culled.empty())
+        { std::fprintf(stderr, "twin: alive sets differ\n"); ok = false; }
+        else
+        {
+            for(std::size_t i = 0; i < scores_cell.alive_unique_information.size(); i++)
+            {
+                const float a = scores_cell.alive_unique_information[i], b = scores_twin.alive_unique_information[i];
+                if(std::isnan(a) != std::isnan(b) || (!std::isnan(a) && std::abs(a - b) > 1e-4f * std::max(1.0f, std::abs(a))))
+                { std::fprintf(stderr, "twin: unique information differs for view %llu (%g vs %g)\n",
+                               static_cast<unsigned long long>(scores_cell.alive_ids[i]), a, b); ok = false; break; }
+            }
+        }
+    }
+
     std::cout << "synthetic demo: " << num_views << " views, " << inserted << " inserted, " << culled_total
               << " culled, " << cell.size() - std::size_t(culled_total) << " alive" << std::endl;
     cell.print_profile();

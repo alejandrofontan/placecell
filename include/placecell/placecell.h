@@ -22,11 +22,22 @@
  * explain (the information a keyframe made from it would add) — a read-only query
  * on the same kernel the culler marginalises.
  *
+ * Two ways to fill a store, never mixed (the first call decides; clear() resets):
+ * - descriptor-backed: add(id, descriptor) grows the kernel by the new row of dots
+ *   and keeps the descriptor, so unexplained_information(descriptor) can compare a
+ *   new view against the store;
+ * - kernel-only: set_kernel(similarity, ids) initialises an EMPTY store from a host-
+ *   supplied n x n similarity (e.g. a precomputed VPR matrix loaded with kernel_io.h's
+ *   load_npy + similarity_from_distance). There are no descriptors: descriptor() is
+ *   nullptr for every id, add() is refused (ERROR log, invalid_id) and the descriptor
+ *   query returns NaN — the kernel side (cull_keyframes, kernel(), centred_kernel(),
+ *   snapshot(), dump()) works exactly as for a descriptor-backed store.
+ *
  * Contracts:
  * - add() is idempotent: an id that already exists keeps its stored descriptor and
  *   returns its existing internal id.
  * - descriptor() returns a stable pointer (entries are never relocated or mutated),
- *   nullptr for an unknown id.
+ *   nullptr for an unknown id (and for every id of a kernel-only store).
  * - kernel()/external_ids() return snapshots (consistent with each other only when
  *   taken together by the caller in the absence of concurrent adds; row counts can
  *   only grow, so a kernel snapshot is always a leading principal submatrix of any
@@ -47,6 +58,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -99,8 +111,62 @@ public:
 
     // Store a descriptor under the host's id and grow the kernel by its row (O(n)
     // dot products); returns its internal id. Idempotent: a known id returns its
-    // existing internal id and keeps the stored descriptor and kernel row.
+    // existing internal id and keeps the stored descriptor and kernel row. Refused on
+    // a kernel-only store (set_kernel was called): ERROR log, returns invalid_id.
     InternalId add(ExternalId id, Eigen::VectorXf descriptor);
+
+    // ---- Kernel-only initialisation ----------------------------------------------
+
+    struct KernelOptions
+    {
+        // Replace S by (S + S^T)/2. A matrix built as the min over image rotations
+        // (VPR-LAB's D.npy) is not symmetric; both entries estimate the same quantity.
+        bool symmetrise{true};
+        // WARN (instead of INFO) when max|S_ij - S_ji| exceeds this before symmetrising
+        float asymmetry_warn{0.05f};
+        // Set every diagonal entry to exactly 1 (a distance matrix's diagonal is ~0 up
+        // to rounding, so the converted similarity is ~1 up to rounding)
+        bool unit_diagonal{true};
+        // Compute the smallest eigenvalue (O(n^3): ~0.5 s at n = 1000, minutes at
+        // n = 10000) and WARN when it is negative — the kernel is then not a valid
+        // covariance and cull_keyframes' scores degrade softly (issue #3)
+        bool psd_check{true};
+        // Project onto the PSD cone (clip negative eigenvalues at 0) and renormalise to
+        // unit diagonal; implies the eigen-decomposition whatever psd_check says
+        bool clip_to_psd{false};
+    };
+
+    struct KernelReport
+    {
+        int views{0};
+        float max_asymmetry{0.0f};           // max |S_ij - S_ji| of the input
+        float max_diagonal_deviation{0.0f};  // max |S_ii - 1| of the input
+        // Smallest / largest eigenvalue of the (symmetrised, unit-diagonal) kernel
+        // BEFORE clipping; NaN when neither psd_check nor clip_to_psd asked for them
+        float min_eigenvalue{std::numeric_limits<float>::quiet_NaN()};
+        float max_eigenvalue{std::numeric_limits<float>::quiet_NaN()};
+        int negative_eigenvalues{0};
+        bool clipped{false};
+        double ms{0.0};
+    };
+
+    // Initialise an EMPTY store from a host-supplied n x n similarity kernel (row/col i
+    // -> ids[i], or 0..n-1 when `ids` is empty): the views are stored without
+    // descriptors, all alive and unprotected, and the centring statistics are rebuilt
+    // from the matrix. The store becomes kernel-only (see the class comment). What
+    // the options fixed is returned and logged (INFO; WARN for a negative eigenvalue
+    // or a large asymmetry).
+    // Throws std::logic_error when the store is not empty (call clear() first), and
+    // std::invalid_argument for a non-square matrix, an ids size mismatch, duplicate
+    // ids, or a NaN entry.
+    KernelReport set_kernel(const Eigen::MatrixXf& similarity, const std::vector<ExternalId>& ids,
+                            const KernelOptions& options);
+    // Default options (an overload rather than a default argument: GCC cannot use a
+    // nested struct's member initialisers as a default argument of the enclosing class)
+    KernelReport set_kernel(const Eigen::MatrixXf& similarity, const std::vector<ExternalId>& ids = {});
+
+    // True once set_kernel has initialised this store (until clear())
+    bool kernel_only() const;
 
     bool has(ExternalId id) const;
 
@@ -158,7 +224,7 @@ public:
     // Unexplained information of `descriptor` given the alive views (or, with
     // `window`, the alive views among those ids) — the information a keyframe made
     // from this view would add to them. Read-only: nothing is stored, the kernel is
-    // untouched. Same kernel as cull_keyframes: with `centred` the stored views are
+    // untouched. NaN on a kernel-only store (no descriptors to compare against). Same kernel as cull_keyframes: with `centred` the stored views are
     // double-centred over every stored view (alive and history) exactly as the culler
     // does and the query is centred out-of-sample against that same mean, so on a
     // raw kernel the value equals the unique information v_i the view would have
@@ -249,6 +315,7 @@ private:
     // The maths (unexplained_information / cull_keyframes) call these once per event;
     // they fan out to the Recorder and the Logger (src/placecell_events.cpp)
     void on_add(ExternalId id, InternalId internal, bool size_mismatch) const;
+    void on_set_kernel(const KernelReport& report, const KernelOptions& options) const;
     void on_query(const Information& information, int stored, int window_size, bool centred, double ms) const;
     void on_cull_call(const CullParameters& parameters, const CullReport& report, bool local, double ms) const;
 
@@ -277,6 +344,8 @@ private:
     // arrived (NaN kernel entries): then no query can be compared.
     Eigen::Index descriptor_size_{0};
     bool size_mismatch_{false};
+    // set_kernel() filled this store: no descriptors, add() refused, descriptor query NaN
+    bool kernel_only_{false};
     std::deque<char> culled_;                           // InternalId -> removed (history row)
     std::deque<char> protected_;                        // InternalId -> never cull
 };

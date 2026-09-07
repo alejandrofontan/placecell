@@ -148,7 +148,8 @@ private:
     std::vector<Thresholds> thresholds_;
 };
 
-// Minimal NumPy .npy writer (float32, C order) for kernel dumps
-void save_npy(const std::string& path, const Eigen::MatrixXf& matrix);
-
 } // namespace placecell
+
+// save_npy (kernel dumps) lives in kernel_io.h; included here so existing callers of
+// recorder.h keep seeing it
+#include "placecell/kernel_io.h"
