@@ -21,6 +21,9 @@ kernel-demo = { cmd = "./build/examples/kernel_demo", depends-on = ["build"] }
 # Pairwise shared-information kernel of a COLMAP reconstruction (numpy only): pixi run colmap-kernel <model_dir>
 # --rgb-csv <sequence>/rgb.csv [--out dir] -> kernel.npy + ids.csv, then kernel-demo <out>/kernel.npy --kind similarity --ids <out>/ids.csv
 colmap-kernel = "python tools/colmap_information_kernel.py"
+# Both kernels over the images COLMAP registered: heatmaps (min-max 0-1), difference, scatter + correlation stats
+# pixi run compare-kernels <D.npy> <colmap_kernel_dir> [--centred] [--out fig.png] [--show]
+compare-kernels = "python tools/compare_kernels.py"
 python-smoke = { cmd = '''python -c "import sys; sys.path.insert(0, 'build/python'); import _placecell; print(_placecell.PlaceCell())"''', depends-on = ["build"] }
 plot = "python tools/plot_placecell.py placecell_demo_out"
 clean = "rm -rf build"
