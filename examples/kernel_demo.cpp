@@ -53,6 +53,7 @@ int main(int argc, char** argv)
     std::string matrix_path;
     std::string output_dir = "placecell_kernel_out";
     std::string rgb_csv_path;   // empty: look next to the matrix (<sequence>/rgb.csv, rgb_raw.csv)
+    std::string ids_path;       // empty: row i -> id i; else a csv whose 2nd column is row i's external id
     placecell::DistanceKind kind = placecell::DistanceKind::squared_euclidean;
     float tau = 0.3f;
     int min_keyframes = 5;
@@ -79,6 +80,7 @@ int main(int argc, char** argv)
         else if(std::strcmp(argv[i], "--no-psd-check") == 0) kernel_options.psd_check = false;
         else if(std::strcmp(argv[i], "--out") == 0) output_dir = next("--out");
         else if(std::strcmp(argv[i], "--rgb-csv") == 0) rgb_csv_path = next("--rgb-csv");
+        else if(std::strcmp(argv[i], "--ids") == 0) ids_path = next("--ids");
         else if(std::strcmp(argv[i], "--verbosity") == 0)
         {
             const auto level = placecell::Logger::parse(next("--verbosity"));
@@ -91,7 +93,7 @@ int main(int argc, char** argv)
     if(matrix_path.empty())
     {
         std::fprintf(stderr, "usage: kernel_demo <matrix.npy> [--kind K] [--tau T] [--min-keyframes N] [--raw] [--clip] "
-                             "[--no-psd-check] [--out dir] [--rgb-csv file] [--verbosity L]\n");
+                             "[--no-psd-check] [--out dir] [--rgb-csv file] [--ids file] [--verbosity L]\n");
         return 1;
     }
     if(!options.verbosity)
@@ -125,13 +127,37 @@ int main(int argc, char** argv)
                     similarity.minCoeff(), values[values.size() / 2], similarity.maxCoeff(), consecutive[consecutive.size() / 2]);
     }
 
+    // ---- ids (optional): csv with a header line, 2nd column = external id of row i ---------
+    std::vector<placecell::PlaceCell::ExternalId> given_ids;
+    if(!ids_path.empty())
+    {
+        std::ifstream in(ids_path);
+        if(!in) { std::fprintf(stderr, "cannot open --ids %s\n", ids_path.c_str()); return 1; }
+        std::string line;
+        std::getline(in, line);   // header
+        while(std::getline(in, line))
+        {
+            if(line.find_first_not_of(" \t\r") == std::string::npos) continue;
+            const std::size_t c1 = line.find(',');
+            if(c1 == std::string::npos) { std::fprintf(stderr, "--ids: malformed line '%s'\n", line.c_str()); return 1; }
+            const std::size_t c2 = line.find(',', c1 + 1);
+            const std::string field = line.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1);
+            given_ids.push_back(placecell::PlaceCell::ExternalId(std::stoull(field)));
+        }
+        if(Eigen::Index(given_ids.size()) != n)
+        {
+            std::fprintf(stderr, "--ids has %zu rows, the matrix %ld\n", given_ids.size(), long(n));
+            return 1;
+        }
+    }
+
     // ---- set_kernel ----------------------------------------------------------------------
     placecell::Logger::instance().set_show_elapsed(true);
     placecell::PlaceCell cell(options);
     placecell::PlaceCell::KernelReport report;
     try
     {
-        report = cell.set_kernel(similarity, {}, kernel_options);
+        report = cell.set_kernel(similarity, given_ids, kernel_options);
     }
     catch(const std::exception& e)
     {
@@ -152,7 +178,10 @@ int main(int argc, char** argv)
     if(!cell.kernel_only()) { std::fprintf(stderr, "store is not kernel-only\n"); ok = false; }
     const std::vector<placecell::PlaceCell::ExternalId> ids = cell.external_ids();
     for(std::size_t i = 0; i < ids.size(); i++)
-        if(ids[i] != i || cell.internal_id(i) != i) { std::fprintf(stderr, "id mapping broken at row %zu\n", i); ok = false; break; }
+    {
+        const placecell::PlaceCell::ExternalId expected = given_ids.empty() ? placecell::PlaceCell::ExternalId(i) : given_ids[i];
+        if(ids[i] != expected || cell.internal_id(expected) != i) { std::fprintf(stderr, "id mapping broken at row %zu\n", i); ok = false; break; }
+    }
     {
         const Eigen::MatrixXf stored = cell.kernel();
         const Eigen::MatrixXf expected = (0.5f * (similarity + similarity.transpose())).eval();
@@ -166,7 +195,7 @@ int main(int argc, char** argv)
         if((stored.diagonal().array() - 1.0f).abs().maxCoeff() > 0.0f) { std::fprintf(stderr, "diagonal not 1\n"); ok = false; }
     }
     if(cell.descriptor(0) != nullptr) { std::fprintf(stderr, "descriptor() must be nullptr on a kernel-only store\n"); ok = false; }
-    if(cell.add(ids.size(), Eigen::VectorXf::Ones(8)) != placecell::PlaceCell::invalid_id)
+    if(cell.add(*std::max_element(ids.begin(), ids.end()) + 1, Eigen::VectorXf::Ones(8)) != placecell::PlaceCell::invalid_id)
     { std::fprintf(stderr, "add() must be refused on a kernel-only store\n"); ok = false; }
     if(!std::isnan(cell.unexplained_information(Eigen::VectorXf::Ones(8)).unexplained))
     { std::fprintf(stderr, "descriptor query must return NaN on a kernel-only store\n"); ok = false; }
@@ -221,6 +250,10 @@ int main(int argc, char** argv)
             candidates.push_back((sequence / "rgb.csv").string());
             candidates.push_back((sequence / "rgb_raw.csv").string());
         }
+        // Without --ids, matrix row i is csv data row i (the csv must have exactly n rows);
+        // with --ids, a view's id IS its csv data row (the csv must reach the largest id).
+        const std::size_t max_id = given_ids.empty() ? std::size_t(n - 1)
+                                                     : std::size_t(*std::max_element(given_ids.begin(), given_ids.end()));
         std::string header, used;
         std::vector<std::string> rows;
         for(const std::string& candidate : candidates)
@@ -236,14 +269,19 @@ int main(int argc, char** argv)
             while(std::getline(in, line))
                 if(!line.empty() && line.find_first_not_of(" \t\r") != std::string::npos)
                     rows.push_back(line);
-            if(Eigen::Index(rows.size()) == n) { used = candidate; break; }
-            std::fprintf(stderr, "  %s has %zu data rows, the matrix %ld: not the csv this matrix was computed on\n",
-                         candidate.c_str(), rows.size(), long(n));
+            const bool fits = given_ids.empty() ? Eigen::Index(rows.size()) == n : rows.size() > max_id;
+            if(fits) { used = candidate; break; }
+            if(given_ids.empty())
+                std::fprintf(stderr, "  %s has %zu data rows, the matrix %ld: not the csv this matrix was computed on\n",
+                             candidate.c_str(), rows.size(), long(n));
+            else
+                std::fprintf(stderr, "  %s has %zu data rows but the ids reach %zu: not the csv the ids index\n",
+                             candidate.c_str(), rows.size(), max_id);
         }
         if(used.empty())
         {
             if(!rgb_csv_path.empty()) { std::fprintf(stderr, "rgb.csv not written: --rgb-csv %s unusable\n", rgb_csv_path.c_str()); ok = false; }
-            else std::cout << "  no rgb.csv with " << n << " rows found next to the matrix (pass --rgb-csv); surviving csv not written" << std::endl;
+            else std::cout << "  no usable rgb.csv found next to the matrix (pass --rgb-csv); surviving csv not written" << std::endl;
         }
         else
         {
@@ -251,8 +289,11 @@ int main(int argc, char** argv)
             std::ofstream out(out_path);
             out << header << "\n";
             int written = 0;
-            for(Eigen::Index i = 0; i < n; i++)
-                if(!cell.is_culled(ids[std::size_t(i)])) { out << rows[std::size_t(i)] << "\n"; written++; }
+            std::vector<placecell::PlaceCell::ExternalId> alive_ids;
+            for(const auto id : ids)
+                if(!cell.is_culled(id)) alive_ids.push_back(id);
+            std::sort(alive_ids.begin(), alive_ids.end());   // csv order = sequence order
+            for(const auto id : alive_ids) { out << rows[std::size_t(id)] << "\n"; written++; }
             if(!out || written != alive) { std::fprintf(stderr, "failed writing %s\n", out_path.c_str()); ok = false; }
             std::cout << "  surviving frames: " << written << " of " << n << " rows of " << used << " -> " << out_path.string() << std::endl;
         }

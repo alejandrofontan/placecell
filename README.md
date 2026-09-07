@@ -20,6 +20,7 @@ pixi run build          # configure + compile library, examples, and Python modu
 pixi run example        # run examples/main.cpp
 pixi run demo           # GPU-free synthetic run: queries, insertions, culls, profile table, dump
 pixi run kernel-demo <matrix.npy> [--kind K] [--tau T]   # kernel-only store from a precomputed pairwise matrix; offline cull -> <out>/rgb.csv of surviving frames
+pixi run colmap-kernel <colmap_model_dir> --rgb-csv <sequence>/rgb.csv   # shared-information kernel of a COLMAP reconstruction -> kernel.npy + ids.csv
 pixi run plot           # matplotlib plots of that dump (tools/plot_placecell.py)
 pixi run python-smoke   # import the Python module from the build tree
 pixi run clean          # remove the build directory
@@ -64,6 +65,12 @@ cell.cull_keyframes(params, [](placecell::PlaceCell::ExternalId) { return true; 
 
 Such a store has no descriptors: `add()` is refused and the descriptor query returns NaN, while
 culling, snapshots and dumps work as usual.
+
+`tools/colmap_information_kernel.py <model_dir> --rgb-csv <sequence>/rgb.csv` builds such a kernel
+from a COLMAP reconstruction: the normalised mutual information between every two images'
+measurements in the joint bundle-adjustment problem (poses + points, Gauss-Newton Hessian from
+the reprojection Jacobians). It writes `kernel.npy` + `ids.csv` for
+`kernel_demo <out>/kernel.npy --kind similarity --ids <out>/ids.csv`.
 
 ## Build (plain CMake)
 

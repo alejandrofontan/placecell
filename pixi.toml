@@ -18,6 +18,9 @@ demo = { cmd = "./build/examples/synthetic_demo placecell_demo_out", depends-on 
 # (faiss squared L2 -> --kind squared-euclidean, the default): pixi run kernel-demo <matrix.npy> [--tau T] [--out dir]
 # Also writes <out>/rgb.csv with the frames that survive the offline cull (rows of <sequence>/rgb.csv, or --rgb-csv)
 kernel-demo = { cmd = "./build/examples/kernel_demo", depends-on = ["build"] }
+# Pairwise shared-information kernel of a COLMAP reconstruction (numpy only): pixi run colmap-kernel <model_dir>
+# --rgb-csv <sequence>/rgb.csv [--out dir] -> kernel.npy + ids.csv, then kernel-demo <out>/kernel.npy --kind similarity --ids <out>/ids.csv
+colmap-kernel = "python tools/colmap_information_kernel.py"
 python-smoke = { cmd = '''python -c "import sys; sys.path.insert(0, 'build/python'); import _placecell; print(_placecell.PlaceCell())"''', depends-on = ["build"] }
 plot = "python tools/plot_placecell.py placecell_demo_out"
 clean = "rm -rf build"
