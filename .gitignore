@@ -86,3 +86,5 @@ megaloc_models/
 
 # synthetic_demo / PlaceCell::dump() output
 placecell_demo_out/
+# kernel_demo default output
+placecell_kernel_out/

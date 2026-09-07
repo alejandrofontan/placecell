@@ -141,6 +141,10 @@ int main(int argc, char** argv)
     std::printf("  set_kernel: %d views in %.1f ms | max asymmetry %.4f | max |diag-1| %.2e | eigenvalues [%.4f, %.2f], %d negative%s\n",
                 report.views, report.ms, report.max_asymmetry, report.max_diagonal_deviation, report.min_eigenvalue,
                 report.max_eigenvalue, report.negative_eigenvalues, report.clipped ? " (clipped)" : "");
+    if(report.negative_eigenvalues > 0 && !report.clipped)
+        std::printf("  WARNING: indefinite kernel (not PSD). The culler's unique-information scores are then not bounded by\n"
+                    "           [0,1] and its tau budget is not honoured (on ETH table_3 D.npy the survivor count is ~970\n"
+                    "           for every tau). Rerun with --clip, or use the symmetric D_0.npy, for a meaningful selection.\n");
 
     // ---- Checks: the store mirrors the matrix ------------------------------------------
     bool ok = true;

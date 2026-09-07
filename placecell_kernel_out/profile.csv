@@ -1,8 +1,0 @@
-function,ms,size_a,size_b
-set_kernel,155.327,1180,-1
-unexplained_information,0.003102,1180,0
-cull_keyframes,452.466,1180,0
-cull_keyframes/snapshot+centring,14.6282,1180,-1
-cull_keyframes/inverse,196.393,1180,-1
-cull_keyframes/greedy,240.523,1180,211
-cull_keyframes/host_callback,0.031969,211,-1
