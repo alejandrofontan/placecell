@@ -120,9 +120,11 @@ void PlaceCell::on_cull_call(const CullParameters& parameters, const CullReport&
                         << fixed3(view.unique_information) << ", worst unexplained after "
                         << fixed3(view.worst_unexplained_after) << ", alive " << view.alive_after);
     PLACECELL_DEBUG("cull_keyframes", "[" << (local ? "local" : "map") << (parameters.centred ? ", centred" : ", raw")
+                    << (parameters.target_alive > 0 ? ", target " + std::to_string(parameters.target_alive) : std::string())
                     << "] culled " << report.culled.size() << " of " << report.candidates << " candidates ("
                     << report.alive_after << " alive in scope, " << report.views_total << " views ever); worst history "
-                    << fixed3(report.worst_history) << " (tau " << fixed3(parameters.max_unexplained) << ")"
+                    << fixed3(report.worst_history)
+                    << (parameters.target_alive > 0 ? std::string(" (count-driven)") : " (tau " + fixed3(parameters.max_unexplained) + ")")
                     << (report.reached_max_per_call ? " [per-call limit reached]" : "") << " " << fixed3(ms) << "ms");
 
     // Threshold lowered below earlier culls: say so once per change, not per call

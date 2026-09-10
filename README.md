@@ -66,7 +66,9 @@ cell.cull_keyframes(params, [](placecell::PlaceCell::ExternalId) { return true; 
 ```
 
 Such a store has no descriptors: `add()` is refused and the descriptor query returns NaN, while
-culling, snapshots and dumps work as usual.
+culling, snapshots and dumps work as usual. `params.max_unexplained` (tau) bounds what a cull may
+leave unexplained; alternatively `params.target_alive = N` runs the same greedy order until N views
+remain (count-driven, tau ignored) — the "keep the N least redundant frames" selection.
 
 `tools/colmap_information_kernel.py <model_dir> --rgb-csv <sequence>/rgb.csv` builds such a kernel
 from a COLMAP reconstruction: the normalised mutual information between every two images'
@@ -97,6 +99,24 @@ target_link_libraries(your_target PRIVATE placecell::placecell)
 ```bash
 pip install .           # builds the wheel via scikit-build-core
 python -c "import placecell; print(placecell.PlaceCell())"
+```
+
+The bindings cover the core (no MegaLoc / OpenCV), including the kernel-only path. Offline
+selection of the N least redundant frames of a sequence from a precomputed pairwise matrix:
+
+```python
+import numpy as np, placecell as pc
+
+D = np.load("vpr-lab/D.npy").astype(np.float32)               # faiss squared L2 on unit descriptors
+S = pc.similarity_from_distance(D, "squared-euclidean")       # S = 1 - D/2
+cell = pc.PlaceCell()
+options = pc.PlaceCell.KernelOptions(); options.clip_to_psd = True
+cell.set_kernel(S, None, options)                             # ids 0..n-1, symmetrised, PSD-clipped
+
+params = pc.PlaceCell.CullParameters()
+params.target_alive = 100; params.min_keyframes = 1           # count-driven: stop at 100 alive views
+report = cell.cull_keyframes(params, lambda frame: True)
+kept = [i for i in range(len(cell)) if not cell.is_culled(i)]
 ```
 
 ## License

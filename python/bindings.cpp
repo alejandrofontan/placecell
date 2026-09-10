@@ -1,10 +1,12 @@
 /**
  * placecell Python bindings (nanobind).
  *
- * Core only (no MegaLoc / OpenCV): the store, the kernel, the two information queries
- * and the three managers' Python-side surface — verbosity, profile report, recorder
- * access and dump() — so the offline visualizer (tools/plot_placecell.py) and a
- * notebook can drive placecell on precomputed descriptors.
+ * Core only (no MegaLoc / OpenCV): the store, the kernel (descriptor-backed through add()
+ * or kernel-only through set_kernel() + similarity_from_distance()), the two information
+ * queries and the three managers' Python-side surface — verbosity, profile report,
+ * recorder access and dump() — so the offline visualizer (tools/plot_placecell.py), a
+ * notebook, or VSLAM-LAB's rgb_placecell capability can drive placecell on precomputed
+ * descriptors or a precomputed pairwise matrix.
  */
 #include <nanobind/nanobind.h>
 #include <nanobind/eigen/dense.h>
@@ -13,6 +15,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <placecell/kernel_io.h>
 #include <placecell/placecell.h>
 
 namespace nb = nanobind;
@@ -40,6 +43,19 @@ NB_MODULE(_placecell, m)
         placecell::Logger::instance().set_level(*parsed);
     }, "level"_a);
     m.def("verbosity", []() { return placecell::Logger::instance().level(); });
+
+    // ---- kernel_io -----------------------------------------------------------------------
+    m.def("similarity_from_distance",
+          [](const Eigen::MatrixXf& distance, const std::string& kind) {
+              const auto parsed = placecell::parse_distance_kind(kind);
+              if(!parsed)
+                  throw nb::value_error("unknown distance kind (similarity|squared-euclidean|cosine-distance|euclidean)");
+              return placecell::similarity_from_distance(distance, *parsed);
+          },
+          "distance"_a, "kind"_a,
+          "Pairwise distance matrix of unit-norm descriptors -> similarity kernel for PlaceCell.set_kernel: "
+          "'similarity' (identity), 'squared-euclidean' (S = 1 - D/2; faiss / VPR-LAB D.npy), "
+          "'cosine-distance' (S = 1 - D), 'euclidean' (S = 1 - D^2/2)");
 
     // ---- Profiler ------------------------------------------------------------------------
     nb::class_<placecell::Profiler> profiler(m, "Profiler");
@@ -118,7 +134,24 @@ NB_MODULE(_placecell, m)
         .def_rw("min_keyframes", &PlaceCell::CullParameters::min_keyframes)
         .def_rw("protect_last", &PlaceCell::CullParameters::protect_last)
         .def_rw("max_per_call", &PlaceCell::CullParameters::max_per_call)
-        .def_rw("protect_first", &PlaceCell::CullParameters::protect_first);
+        .def_rw("protect_first", &PlaceCell::CullParameters::protect_first)
+        .def_rw("target_alive", &PlaceCell::CullParameters::target_alive);
+    nb::class_<PlaceCell::KernelOptions>(cell, "KernelOptions")
+        .def(nb::init<>())
+        .def_rw("symmetrise", &PlaceCell::KernelOptions::symmetrise)
+        .def_rw("asymmetry_warn", &PlaceCell::KernelOptions::asymmetry_warn)
+        .def_rw("unit_diagonal", &PlaceCell::KernelOptions::unit_diagonal)
+        .def_rw("psd_check", &PlaceCell::KernelOptions::psd_check)
+        .def_rw("clip_to_psd", &PlaceCell::KernelOptions::clip_to_psd);
+    nb::class_<PlaceCell::KernelReport>(cell, "KernelReport")
+        .def_ro("views", &PlaceCell::KernelReport::views)
+        .def_ro("max_asymmetry", &PlaceCell::KernelReport::max_asymmetry)
+        .def_ro("max_diagonal_deviation", &PlaceCell::KernelReport::max_diagonal_deviation)
+        .def_ro("min_eigenvalue", &PlaceCell::KernelReport::min_eigenvalue)
+        .def_ro("max_eigenvalue", &PlaceCell::KernelReport::max_eigenvalue)
+        .def_ro("negative_eigenvalues", &PlaceCell::KernelReport::negative_eigenvalues)
+        .def_ro("clipped", &PlaceCell::KernelReport::clipped)
+        .def_ro("ms", &PlaceCell::KernelReport::ms);
     nb::class_<PlaceCell::CullReport> report(cell, "CullReport");
     nb::class_<PlaceCell::CullReport::CulledView>(report, "CulledView")
         .def_ro("id", &PlaceCell::CullReport::CulledView::id)
@@ -138,6 +171,17 @@ NB_MODULE(_placecell, m)
     cell.def(nb::init<>())
         .def(nb::init<const PlaceCell::Options&>(), "options"_a)
         .def("add", &PlaceCell::add, "id"_a, "descriptor"_a)
+        .def("set_kernel",
+             [](PlaceCell& self, const Eigen::MatrixXf& similarity,
+                const std::optional<std::vector<PlaceCell::ExternalId>>& ids,
+                const std::optional<PlaceCell::KernelOptions>& options) {
+                 return self.set_kernel(similarity, ids ? *ids : std::vector<PlaceCell::ExternalId>{},
+                                        options ? *options : PlaceCell::KernelOptions{});
+             },
+             "similarity"_a, "ids"_a = nb::none(), "options"_a = nb::none(),
+             "Initialise an EMPTY store from an n x n similarity (kernel-only: no descriptors, add() refused); "
+             "row i -> ids[i] (or i). Raises ValueError on a bad matrix, RuntimeError on a non-empty store.")
+        .def("kernel_only", &PlaceCell::kernel_only)
         .def("has", &PlaceCell::has, "id"_a)
         .def("internal_id", &PlaceCell::internal_id, "id"_a)
         .def("size", &PlaceCell::size)

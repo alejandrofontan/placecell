@@ -574,6 +574,12 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     // with candidates drawn from the window and the history reduced to the culled
     // views whose best alive explainer (over ALL alive views) lies in it — so far-away
     // history cannot veto a local cull, and far-away views cannot explain a local one.
+    //
+    // COUNT-DRIVEN (parameters.target_alive > 0): the same greedy order (smallest v_i
+    // first, same downdates) but with tau = +inf, so neither v_i nor the history rows
+    // bound a cull; the loop stops when target_alive views are alive in scope (never
+    // below min_keyframes). This is the offline "keep the N least redundant views"
+    // selection; the report's alive_after says how many actually survived.
     if(parameters.method != "gram-greedy")
     {
         PLACECELL_ERROR("cull_keyframes", "unknown method '" << parameters.method << "' (options: gram-greedy)");
@@ -653,7 +659,10 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     const int na = int(alive.size());
     report.alive_after = na;
     timer.set_sizes(na, std::int64_t(history.size()));
-    if(na <= parameters.min_keyframes)
+    const bool count_driven = parameters.target_alive > 0;
+    const int stop_at = count_driven ? std::max(parameters.min_keyframes, parameters.target_alive)
+                                     : parameters.min_keyframes;
+    if(na <= stop_at)
         return report;
 
     auto is_protected_row = [&](const int i) -> bool {
@@ -673,7 +682,9 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     if(num_candidates == 0)
         return report;
 
-    const double tau = double(parameters.max_unexplained);
+    // Count-driven: an infinite tau makes every candidate feasible (v_i <= tau and the
+    // history price test below both hold trivially); only the alive count stops the loop
+    const double tau = count_driven ? std::numeric_limits<double>::infinity() : double(parameters.max_unexplained);
     constexpr double jitter = 1e-6;
     constexpr double over_budget_slack = 0.01;   // max deterioration allowed for history rows already above tau
     const int max_per_call = parameters.max_per_call;
@@ -710,7 +721,7 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     std::vector<char> removed(na, 0);
     int num_alive = na;
     int num_culled = 0;
-    while(num_alive > parameters.min_keyframes && (max_per_call <= 0 || num_culled < max_per_call)){
+    while(num_alive > stop_at && (max_per_call <= 0 || num_culled < max_per_call)){
         // Score every candidate: unique information v_i and the worst unexplained view after culling it.
         // Feasible iff v_i <= tau and no history row is raised by more than max(tau - v_h, slack).
         int best = -1;

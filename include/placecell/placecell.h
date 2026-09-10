@@ -267,6 +267,12 @@ public:
         int max_per_call{0};
         // Never cull the first inserted view (it anchors the host's map)
         bool protect_first{true};
+        // Count-driven mode (0 = off): cull the least unique alive view, one at a time,
+        // until this many alive views remain in scope, ignoring max_unexplained (the
+        // history constraint is not enforced either) — the offline "best N keyframes"
+        // selection of a sequence. min_keyframes and the protections still apply, so
+        // fewer culls than requested can happen (report.alive_after tells).
+        int target_alive{0};
     };
 
     struct CullReport
@@ -298,6 +304,8 @@ public:
 
     // Greedy joint-information culling on the kernel (see the .cpp for the maths).
     // Alive views = stored, not culled; candidates = alive, unprotected, in scope.
+    // With parameters.target_alive > 0 the same greedy order runs count-driven instead
+    // of tau-driven: it stops when that many views are alive (see CullParameters).
     // `local_window` (optional) restricts the marginalisation to those external ids
     // (the host's covisibility window): candidates and explainers come from the
     // window, and history is reduced to the rows whose best alive explainer (over the
