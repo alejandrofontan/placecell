@@ -28,7 +28,9 @@ the fraction of each image's own information gain that the pair shares. Data pro
 gives I_ij <= min(G_i, G_j), so K is in [0,1] with unit diagonal (PSD is not guaranteed;
 set_kernel checks it, kernel_demo --clip projects). Every logdet is a Schur complement of
 the independent 3x3 point blocks onto the pose block; the single-image reductions are
-precomputed once per image so a pair costs O(#shared points).
+precomputed once per image and every pair-point incidence is processed in numpy batches
+(pairwise_mutual_information), so the cost is linear in sum over tracks of L(L-1)/2 —
+a 1180-image model with 38 M incidences takes about a minute and ~1.5 GB.
 
 Conventions. Only registered images get a row. Row ids are the data-row index of the
 sequence's rgb.csv (--rgb-csv; VSLAM-LAB's frame_id numbering, same as VPR-LAB's D.npy),
@@ -40,7 +42,7 @@ models are approximated by their focal length / principal point (warned).
 Usage:
     colmap_information_kernel.py <model_dir> [--rgb-csv rgb.csv] [--out dir]
         [--sigma-pix 1.0] [--prior-scale 1.0] [--sigma-t S] [--sigma-rot S] [--sigma-point S]
-        [--check N] [--quiet]
+        [--check N] [--chunk 200000] [--quiet]
 
 <model_dir> holds cameras/images/points3D as .bin or .txt (the .bin is preferred). Output:
 <out>/kernel.npy (float32 NMI), <out>/mutual_information.npy (I_ij in nats, diagonal G_i),
@@ -194,13 +196,15 @@ class ImageInfo:
     is the image's reduced pose information; ld_full = sum_k logdet(P_k) - 3 n_k log(lambda_p)
     + logdet(A_full) - logdet(prior_c) is logdet(L0+H_i) - logdet(L0)."""
 
-    def __init__(self, image, fx, fy, cx, cy, points, lambda_p, prior_c, inv_sigma_pix):
+    def __init__(self, image, fx, fy, cx, cy, points, lambda_p, prior_c, inv_sigma_pix, keep_jacobians=False):
         valid = image["pid"] >= 0
         pids = image["pid"][valid]
         keep = np.array([p in points for p in pids], dtype=bool) if len(pids) else np.zeros(0, bool)
         # Per OBSERVATION (COLMAP can map two keypoints of one image to the same 3D point,
-        # so observations and unique points differ): Jacobians stay per observation, the
-        # information blocks are aggregated per unique point below.
+        # so observations and unique points differ): Jacobians are formed per observation,
+        # the information blocks are aggregated per unique point below. Only the per-point
+        # blocks a pair needs are kept (B, P_k^-1, JpJp, logdet P_k: ~300 B per point);
+        # keep_jacobians retains Jx/Jp/obs_pids for the dense --check.
         self.obs_pids = pids[keep]
         P = np.array([points[p] for p in self.obs_pids]) if len(self.obs_pids) else np.zeros((0, 3))
         R, t = image["R"], image["t"]
@@ -218,40 +222,51 @@ class ImageInfo:
         skew[:, 1, 0], skew[:, 1, 2] = Z, -X
         skew[:, 2, 0], skew[:, 2, 1] = -Y, X
         dpc_dxi = np.concatenate([-skew, np.broadcast_to(np.eye(3), (n, 3, 3))], axis=2)   # (n,3,6)
-        self.Jx = A @ dpc_dxi                         # (n,2,6) per observation
-        self.Jp = A @ R                               # (n,2,3) per observation
-        JxJx = np.einsum("nki,nkj->nij", self.Jx, self.Jx)   # (n,6,6)
-        JpJp = np.einsum("nki,nkj->nij", self.Jp, self.Jp)   # (n,3,3)
-        B = np.einsum("nki,nkj->nij", self.Jx, self.Jp)      # (n,6,3)
-        # Aggregate per unique 3D point (m <= n)
+        Jx = A @ dpc_dxi                              # (n,2,6) per observation
+        Jp = A @ R                                    # (n,2,3) per observation
+        JxJx = np.einsum("nki,nkj->nij", Jx, Jx)      # (n,6,6)
+        JpJp = np.einsum("nki,nkj->nij", Jp, Jp)      # (n,3,3)
+        B = np.einsum("nki,nkj->nij", Jx, Jp)         # (n,6,3)
+        # Aggregate per unique 3D point (m <= n); pids come out sorted (searchsorted lookups)
         self.pids, inverse = np.unique(self.obs_pids, return_inverse=True)
         m = len(self.pids)
-        self.JxJx = np.zeros((m, 6, 6)); np.add.at(self.JxJx, inverse, JxJx)
+        JxJx_sum = JxJx.sum(0)
         self.JpJp = np.zeros((m, 3, 3)); np.add.at(self.JpJp, inverse, JpJp)
         self.B = np.zeros((m, 6, 3)); np.add.at(self.B, inverse, B)
         Pk = self.JpJp + lambda_p * np.eye(3)
         self.Pk_inv = np.linalg.inv(Pk)
         self.ldP = batched_logdet(Pk)                                # (m,)
-        self.T = np.einsum("nij,njk,nlk->nil", self.B, self.Pk_inv, self.B)   # (m,6,6)
-        self.A_full = prior_c + self.JxJx.sum(0) - self.T.sum(0)
-        self.ld_full = float(self.ldP.sum()) - 3 * m * np.log(lambda_p) + logdet(self.A_full) - logdet(prior_c)
-        self.index = {int(p): k for k, p in enumerate(self.pids)}
+        T_sum = np.einsum("nij,njk,nlk->il", self.B, self.Pk_inv, self.B)   # sum_k B_k P_k^-1 B_k^T
+        self.A_full = prior_c + JxJx_sum - T_sum
+        self.ldA = logdet(self.A_full)
+        self.ld_full = float(self.ldP.sum()) - 3 * m * np.log(lambda_p) + self.ldA - logdet(prior_c)
         self.lambda_p = lambda_p
         self.prior_c = prior_c
+        if keep_jacobians:
+            self.Jx, self.Jp = Jx, Jp
+        else:
+            self.obs_count = n
+            self.obs_pids = None
 
     @property
     def gain(self) -> float:
         return 0.5 * self.ld_full
 
+    def rows(self, shared: np.ndarray) -> np.ndarray:
+        """Row indices (into pids/B/...) of the given point ids (must all be observed)."""
+        return np.searchsorted(self.pids, shared)
+
 
 def pair_logdet(a: ImageInfo, b: ImageInfo, shared: np.ndarray) -> float:
-    """logdet(L0 + H_a + H_b) - logdet(L0) for the pair problem over the union of their points.
-    Exclusive points keep their single-image Schur terms; shared points are re-done jointly."""
-    ka = np.array([a.index[int(p)] for p in shared])
-    kb = np.array([b.index[int(p)] for p in shared])
+    """logdet(L0 + H_a + H_b) - logdet(L0) for the pair problem over the union of their points
+    (reference single-pair implementation; the batched pairwise_mutual_information is the one
+    used for the kernel). Exclusive points keep their single-image Schur terms; shared points
+    are re-done jointly."""
+    ka, kb = a.rows(shared), b.rows(shared)
     S = np.zeros((12, 12))
-    S[:6, :6] = a.A_full + a.T[ka].sum(0)             # undo the single-image Schur terms of shared points
-    S[6:, 6:] = b.A_full + b.T[kb].sum(0)
+    # undo the single-image Schur terms of the shared points, then add the joint ones
+    S[:6, :6] = a.A_full + np.einsum("nij,njk,nlk->il", a.B[ka], a.Pk_inv[ka], a.B[ka])
+    S[6:, 6:] = b.A_full + np.einsum("nij,njk,nlk->il", b.B[kb], b.Pk_inv[kb], b.B[kb])
     P = a.JpJp[ka] + b.JpJp[kb] + a.lambda_p * np.eye(3)     # joint point blocks (m,3,3)
     P_inv = np.linalg.inv(P)
     B = np.concatenate([a.B[ka], b.B[kb]], axis=1)    # (m,12,3)
@@ -262,6 +277,114 @@ def pair_logdet(a: ImageInfo, b: ImageInfo, shared: np.ndarray) -> float:
     prior_cc[:6, :6] = a.prior_c
     prior_cc[6:, 6:] = b.prior_c
     return ld_points - 3 * n_points * np.log(a.lambda_p) + logdet(S) - logdet(prior_cc)
+
+
+def pairwise_mutual_information(infos: list, lambda_p: float, chunk_incidences: int = 200_000,
+                                progress=None) -> tuple[np.ndarray, int]:
+    """I_ij for every pair of images sharing a point, batched. Returns (I, n_pairs) with
+    the images' own gains G_i on the diagonal.
+
+    With the single-image reductions in hand, a pair only needs its shared points:
+        I_ab = 1/2 [ logdet A_a + logdet A_b - logdet S_ab
+                     - sum_shared ( logdet P_k^ab - logdet P_k^a - logdet P_k^b - 3 log lambda_p ) ]
+    where S_ab = blockdiag(A_a, A_b) + [shared single-image Schur terms put back]
+                 - sum_shared B_k^ab (P_k^ab)^-1 (B_k^ab)^T  (12x12),
+    P_k^ab = lambda_p I + JpJp_k^a + JpJp_k^b, B_k^ab = [B_k^a; B_k^b].
+    (The two prior log-dets and the exclusive points' terms cancel between the singles and
+    the pair.) Implementation: every (image, point) incidence gets a global row in stacked
+    per-point arrays; incidences are sorted by point, the pairs of every track are
+    enumerated with triu indices (vectorised per track length), sorted by pair key, and
+    processed in chunks of <= chunk_incidences rows with batched einsums and
+    np.add.reduceat over the pair segments. Memory: ~30 B per pair-point incidence for the
+    index arrays plus ~200 B per incidence of the current chunk. Cost is linear in the
+    number of incidences, sum over points of L(L-1)/2."""
+    n = len(infos)
+    counts = np.array([len(inf.pids) for inf in infos])
+    offsets = np.concatenate([[0], np.cumsum(counts)])
+    N = int(offsets[-1])
+    B_all = np.concatenate([inf.B for inf in infos]) if N else np.zeros((0, 6, 3))
+    Pinv_all = np.concatenate([inf.Pk_inv for inf in infos]) if N else np.zeros((0, 3, 3))
+    JpJp_all = np.concatenate([inf.JpJp for inf in infos]) if N else np.zeros((0, 3, 3))
+    ldP_all = np.concatenate([inf.ldP for inf in infos]) if N else np.zeros(0)
+    pid_all = np.concatenate([inf.pids for inf in infos]) if N else np.zeros(0, np.int64)
+    img_of = np.repeat(np.arange(n, dtype=np.int32), counts)
+    A_all = np.stack([inf.A_full for inf in infos]) if n else np.zeros((0, 6, 6))
+    ldA = np.array([inf.ldA for inf in infos])
+    G = np.array([inf.gain for inf in infos])
+    I = np.zeros((n, n))
+    np.fill_diagonal(I, G)
+    if N == 0:
+        return I, 0
+
+    # ---- incidences: for every track, all image pairs -----------------------------------
+    order = np.argsort(pid_all, kind="stable")
+    pid_sorted = pid_all[order]
+    starts = np.concatenate([[0], np.flatnonzero(np.diff(pid_sorted)) + 1])
+    lengths = np.diff(np.concatenate([starts, [N]]))
+    keys, ka_list, kb_list = [], [], []
+    for L in np.unique(lengths):
+        if L < 2:
+            continue
+        seg = starts[lengths == L]                                   # (S,)
+        rows = order[seg[:, None] + np.arange(L)[None, :]]           # (S, L) global rows
+        iu, ju = np.triu_indices(L, 1)
+        ka = rows[:, iu].ravel()
+        kb = rows[:, ju].ravel()
+        ia, ib = img_of[ka], img_of[kb]
+        swap = ia > ib                                               # a < b (a point is at most once per image)
+        ka, kb = np.where(swap, kb, ka), np.where(swap, ka, kb)
+        ia, ib = np.minimum(ia, ib), np.maximum(ia, ib)
+        keys.append(ia.astype(np.int64) * n + ib)
+        ka_list.append(ka.astype(np.int32))
+        kb_list.append(kb.astype(np.int32))
+    if not keys:
+        return I, 0
+    key = np.concatenate(keys); ka_all = np.concatenate(ka_list); kb_all = np.concatenate(kb_list)
+    del keys, ka_list, kb_list
+    perm = np.argsort(key, kind="stable")
+    key, ka_all, kb_all = key[perm], ka_all[perm], kb_all[perm]
+    del perm
+    pair_starts = np.concatenate([[0], np.flatnonzero(np.diff(key)) + 1])
+    pair_keys = key[pair_starts]
+    n_pairs = len(pair_starts)
+    pair_ends = np.concatenate([pair_starts[1:], [len(key)]])
+    del key
+    log_lambda = 3.0 * np.log(lambda_p)
+    eye3 = np.eye(3)
+
+    # ---- chunks of whole pairs ------------------------------------------------------------
+    p0 = 0
+    while p0 < n_pairs:
+        # extend the chunk while it stays under the incidence budget (always >= 1 pair)
+        p1 = int(np.searchsorted(pair_ends, pair_starts[p0] + chunk_incidences, side="right"))
+        p1 = max(p1, p0 + 1)
+        s, e = pair_starts[p0], pair_ends[p1 - 1]
+        ka, kb = ka_all[s:e], kb_all[s:e]
+        seg = pair_starts[p0:p1] - s                                 # segment starts within the chunk
+        Ba, Bb = B_all[ka], B_all[kb]                                # (M,6,3)
+        Ta = np.einsum("nij,njk,nlk->nil", Ba, Pinv_all[ka], Ba)      # single-image Schur terms to put back
+        Tb = np.einsum("nij,njk,nlk->nil", Bb, Pinv_all[kb], Bb)
+        P = JpJp_all[ka] + JpJp_all[kb] + lambda_p * eye3            # joint point blocks
+        P_inv = np.linalg.inv(P)
+        B12 = np.concatenate([Ba, Bb], axis=1)                       # (M,12,3)
+        joint = np.einsum("nij,njk,nlk->nil", B12, P_inv, B12)       # (M,12,12)
+        ld_term = batched_logdet(P) - ldP_all[ka] - ldP_all[kb] - log_lambda
+        sum_Ta = np.add.reduceat(Ta, seg, axis=0)
+        sum_Tb = np.add.reduceat(Tb, seg, axis=0)
+        sum_joint = np.add.reduceat(joint, seg, axis=0)
+        sum_ld = np.add.reduceat(ld_term, seg)
+        ia = (pair_keys[p0:p1] // n).astype(np.int64)
+        ib = (pair_keys[p0:p1] % n).astype(np.int64)
+        S = -sum_joint
+        S[:, :6, :6] += A_all[ia] + sum_Ta
+        S[:, 6:, 6:] += A_all[ib] + sum_Tb
+        I_ab = 0.5 * (ldA[ia] + ldA[ib] - batched_logdet(S) - sum_ld)
+        I[ia, ib] = I_ab
+        I[ib, ia] = I_ab
+        if progress:
+            progress(p1, n_pairs)
+        p0 = p1
+    return I, n_pairs
 
 
 def dense_pair_logdet(a: ImageInfo, b: ImageInfo, shared: np.ndarray) -> float:
@@ -276,6 +399,8 @@ def dense_pair_logdet(a: ImageInfo, b: ImageInfo, shared: np.ndarray) -> float:
     L0[12:, 12:] = a.lambda_p * np.eye(3 * len(union))
     H = np.zeros((n, n))
     for img, off in ((a, 0), (b, 6)):
+        if img.obs_pids is None:
+            raise RuntimeError("dense_pair_logdet needs ImageInfo(..., keep_jacobians=True)")
         for k, p in enumerate(img.obs_pids):
             J = np.zeros((2, n))
             J[:, off:off + 6] = img.Jx[k]
@@ -310,7 +435,9 @@ def main() -> int:
     ap.add_argument("--sigma-t", type=float, default=None, help="pose translation prior sigma [median consecutive baseline]")
     ap.add_argument("--sigma-rot", type=float, default=1.0, help="pose rotation prior sigma in rad [1.0]")
     ap.add_argument("--sigma-point", type=float, default=None, help="point prior sigma [median distance to the point cloud centroid]")
-    ap.add_argument("--check", type=int, default=0, help="verify N random pairs against the dense formula")
+    ap.add_argument("--check", type=int, default=0, help="verify N random pairs against the dense formula (slow)")
+    ap.add_argument("--chunk", type=int, default=200_000,
+                    help="pair-point incidences per batch (memory ~200 B each during the batch) [200000]")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -375,46 +502,46 @@ def main() -> int:
     for i in image_ids:
         model, params = cameras[images[i]["camera"]]
         fx, fy, cx, cy = pinhole_params(model, params)
-        infos.append(ImageInfo(images[i], fx, fy, cx, cy, points, lambda_p, prior_c, 1.0 / args.sigma_pix))
+        infos.append(ImageInfo(images[i], fx, fy, cx, cy, points, lambda_p, prior_c, 1.0 / args.sigma_pix,
+                               keep_jacobians=args.check > 0))
     n = len(infos)
     G = np.array([inf.gain for inf in infos])
     say(f"per-image information gain G_i: min {G.min():.1f} median {np.median(G):.1f} max {G.max():.1f} nats "
         f"({time.time() - t0:.1f}s)")
 
-    # ---- pairs -------------------------------------------------------------------------
-    # image -> set of points; pairs that share a point via an inverted index
-    point_to_images: dict[int, list[int]] = {}
-    for a, inf in enumerate(infos):
-        for p in inf.pids:
-            point_to_images.setdefault(int(p), []).append(a)
-    pair_shared: dict[tuple[int, int], list[int]] = {}
-    for p, imgs in point_to_images.items():
-        for x in range(len(imgs)):
-            for y in range(x + 1, len(imgs)):
-                pair_shared.setdefault((imgs[x], imgs[y]), []).append(p)
-    I = np.zeros((n, n))
-    np.fill_diagonal(I, G)
-    for (a, b), shared in pair_shared.items():
-        ld_ab = pair_logdet(infos[a], infos[b], np.array(shared))
-        I[a, b] = I[b, a] = 0.5 * (infos[a].ld_full + infos[b].ld_full - ld_ab)
+    # ---- pairs (batched over all pair-point incidences) ----------------------------------
+    last = [0.0]
+
+    def progress(done: int, total: int) -> None:
+        if not args.quiet and time.time() - last[0] > 5.0:
+            last[0] = time.time()
+            print(f"  pairs {done}/{total} ({time.time() - t0:.0f}s)", flush=True)
+
+    I, n_pairs = pairwise_mutual_information(infos, lambda_p, chunk_incidences=args.chunk, progress=progress)
     K = I / np.sqrt(np.outer(G, G))
     np.fill_diagonal(K, 1.0)
-    say(f"pairs sharing points: {len(pair_shared)} of {n * (n - 1) // 2} ({time.time() - t0:.1f}s)")
+    say(f"pairs sharing points: {n_pairs} of {n * (n - 1) // 2} ({time.time() - t0:.1f}s)")
 
     # ---- self-check against the dense formula --------------------------------------------
-    if args.check > 0 and pair_shared:
+    # Random overlapping pairs: the batched value vs the single-pair reduction vs the dense
+    # (12 + 3m)-dim system. Slow (dense logdets), hence opt-in.
+    if args.check > 0 and n_pairs > 0:
         rng = np.random.default_rng(0)
-        keys = list(pair_shared)
-        worst = 0.0
-        for idx in rng.choice(len(keys), size=min(args.check, len(keys)), replace=False):
-            a, b = keys[idx]
-            shared = np.array(pair_shared[(a, b)])
+        iu, ju = np.triu_indices(n, 1)
+        overlapping = np.flatnonzero(I[iu, ju] > 0)
+        picks = rng.choice(overlapping, size=min(args.check, len(overlapping)), replace=False)
+        worst_dense = worst_batch = 0.0
+        for idx in picks:
+            a, b = int(iu[idx]), int(ju[idx])
+            shared = np.intersect1d(infos[a].pids, infos[b].pids)
             fast = pair_logdet(infos[a], infos[b], shared)
             dense = dense_pair_logdet(infos[a], infos[b], shared)
-            worst = max(worst, abs(fast - dense) / max(1.0, abs(dense)))
-        # single-image reduction vs dense too (pair with itself has no meaning; check G via dense on image a alone)
-        say(f"check: {min(args.check, len(keys))} pairs, worst relative logdet error {worst:.2e}")
-        if worst > 1e-6:
+            worst_dense = max(worst_dense, abs(fast - dense) / max(1.0, abs(dense)))
+            I_single = 0.5 * (infos[a].ld_full + infos[b].ld_full - fast)
+            worst_batch = max(worst_batch, abs(I_single - I[a, b]) / max(1.0, abs(I_single)))
+        say(f"check: {len(picks)} pairs, worst relative error single-pair vs dense {worst_dense:.2e}, "
+            f"batched vs single-pair {worst_batch:.2e}")
+        if worst_dense > 1e-6 or worst_batch > 1e-6:
             print("ERROR: Schur reduction disagrees with the dense formula", file=sys.stderr)
             return 1
 
@@ -441,7 +568,8 @@ def main() -> int:
         w = csv.writer(f)
         w.writerow(["internal_id", "external_id", "image_id", "name", "information_gain", "observations"])
         for a, i in enumerate(image_ids):
-            w.writerow([a, int(external_ids[a]), i, images[i]["name"], f"{G[a]:.6f}", len(infos[a].obs_pids)])
+            observations = len(infos[a].obs_pids) if infos[a].obs_pids is not None else infos[a].obs_count
+            w.writerow([a, int(external_ids[a]), i, images[i]["name"], f"{G[a]:.6f}", observations])
     say(f"ids: {id_source}")
     say(f"wrote {out / 'kernel.npy'} ({n}x{n}), {out / 'mutual_information.npy'}, {out / 'ids.csv'} ({time.time() - t0:.1f}s)")
     return 0
