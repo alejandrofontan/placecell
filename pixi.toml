@@ -47,6 +47,7 @@ matplotlib = "*"
 default = []
 megaloc = { features = ["megaloc"], solve-group = "megaloc" }
 export-megaloc = { features = ["export-megaloc", "megaloc"], solve-group = "megaloc" }
+docs = { features = ["docs"], no-default-feature = true }
 
 [feature.megaloc]
 channels = ["https://repo.prefix.dev/spqr-tests"]
@@ -111,3 +112,15 @@ onnxruntime = "*"
 huggingface_hub = "*"
 git = "*"
 numpy = "<2"
+
+[feature.docs.dependencies]
+python = "3.12.*"
+mkdocs-material = "*"
+mkdocs-mermaid2-plugin = "*"
+mkdocs-literate-nav = "*"
+
+[feature.docs.tasks]
+docs-serve = { cmd = "mkdocs serve", env = { DISABLE_MKDOCS_2_WARNING = "true" } }
+docs-build = { cmd = "mkdocs build --strict", env = { DISABLE_MKDOCS_2_WARNING = "true" } }
+docs-links = { cmd = "python docs/tools/resolve_links.py" }
+docs-check = { cmd = "python docs/tools/resolve_links.py --check && mkdocs build --strict", env = { DISABLE_MKDOCS_2_WARNING = "true" } }

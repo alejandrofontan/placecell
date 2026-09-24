@@ -88,3 +88,6 @@ megaloc_models/
 placecell_demo_out/
 # kernel_demo default output
 placecell_kernel_out/
+
+# mkdocs
+site/
