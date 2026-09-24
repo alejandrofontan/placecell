@@ -1,9 +1,10 @@
 /**
  * placecell Python bindings (nanobind).
  *
- * Core only (no MegaLoc / OpenCV): the store, the kernel (descriptor-backed through add()
- * or kernel-only through set_kernel() + similarity_from_distance()), the two information
- * queries and the three managers' Python-side surface — verbosity, profile report,
+ * Core only (no MegaLoc / OpenCV): the store, the kernel (descriptor-backed through add(),
+ * kernel-only through set_kernel() + similarity_from_distance(), or item-backed through
+ * set_items()), the information queries (unexplained_information for a descriptor,
+ * unexplained_information_items for an item set) and the three managers' Python-side surface — verbosity, profile report,
  * recorder access and dump() — so the offline visualizer (tools/plot_placecell.py), a
  * notebook, or VSLAM-LAB's rgb_placecell capability can drive placecell on precomputed
  * descriptors or a precomputed pairwise matrix.
@@ -168,6 +169,7 @@ NB_MODULE(_placecell, m)
         .def_ro("alive_ids", &PlaceCell::CullReport::alive_ids)
         .def_ro("alive_unique_information", &PlaceCell::CullReport::alive_unique_information);
 
+    cell.attr("invalid_id") = PlaceCell::invalid_id;
     cell.def(nb::init<>())
         .def(nb::init<const PlaceCell::Options&>(), "options"_a)
         .def("add", &PlaceCell::add, "id"_a, "descriptor"_a)
@@ -182,6 +184,33 @@ NB_MODULE(_placecell, m)
              "Initialise an EMPTY store from an n x n similarity (kernel-only: no descriptors, add() refused); "
              "row i -> ids[i] (or i). Raises ValueError on a bad matrix, RuntimeError on a non-empty store.")
         .def("kernel_only", &PlaceCell::kernel_only)
+        .def("set_items",
+             [](PlaceCell& self, const PlaceCell::ExternalId id, std::vector<PlaceCell::ItemId> items) {
+                 return self.set_items(id, std::move(items));
+             },
+             "id"_a, "items"_a,
+             "Store or refresh the item set (e.g. map-point ids) of a view: K_ij = |P_i & P_j| / sqrt(|P_i| |P_j|). "
+             "First call on an EMPTY store makes it item-backed (add() then refused, descriptor() None); "
+             "refused (invalid_id) on a descriptor or kernel-only store. A culled view's set is frozen; "
+             "an empty set gives a NaN (unusable) row. Returns the internal id (kernel row).")
+        .def("items",
+             [](const PlaceCell& self, const PlaceCell::ExternalId id) -> std::optional<std::vector<PlaceCell::ItemId>> {
+                 const std::vector<PlaceCell::ItemId>* items = self.items(id);
+                 if(!items)
+                     return std::nullopt;
+                 return *items;
+             },
+             "id"_a, "Sorted item set of a view (a copy), None for an unknown id or a store that is not item-backed")
+        .def("item_mode", &PlaceCell::item_mode)
+        .def("unexplained_information_items",
+             [](const PlaceCell& self, const std::vector<PlaceCell::ItemId>& items,
+                const std::optional<std::vector<PlaceCell::ExternalId>>& window, const bool centred) {
+                 return self.unexplained_information(items, window ? &*window : nullptr, centred);
+             },
+             "items"_a, "window"_a = nb::none(), "centred"_a = false,
+             "Unexplained information of a view NOT in the store given by its item set (item-backed stores only; "
+             "NaN otherwise or for an empty set). Same maths as unexplained_information; centring defaults to off "
+             "because the covisibility cosine has no common-mode floor.")
         .def("has", &PlaceCell::has, "id"_a)
         .def("internal_id", &PlaceCell::internal_id, "id"_a)
         .def("size", &PlaceCell::size)

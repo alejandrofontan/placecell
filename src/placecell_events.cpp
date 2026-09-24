@@ -38,6 +38,16 @@ void PlaceCell::on_add(const ExternalId id, const InternalId internal, const boo
     PLACECELL_DEBUG("add", "view " << id << " stored as row " << internal);
 }
 
+void PlaceCell::on_set_items(const ExternalId id, const InternalId internal, const std::size_t items,
+                             const std::size_t added, const std::size_t removed, const bool new_view) const
+{
+    if(items == 0)
+        PLACECELL_WARN_ONCE("set_items", "view " << id << " has an empty item set: its kernel row is NaN (0/0) and the "
+                            "view is ignored by cull_keyframes and unexplained_information until it gets items");
+    PLACECELL_DEBUG("set_items", "view " << id << (new_view ? " stored as row " : " refreshed at row ") << internal
+                    << ": " << items << " items (+" << added << " / -" << removed << ")");
+}
+
 void PlaceCell::on_set_kernel(const KernelReport& report, const KernelOptions& options) const
 {
     std::ostringstream line;
@@ -77,7 +87,8 @@ void PlaceCell::on_query(const Information& information, const int stored, const
 
     if(std::isnan(information.unexplained))
         PLACECELL_WARN_ONCE("unexplained_information", "the query cannot be compared with the store (descriptor-size "
-                            "mismatch, or a kernel-only store without descriptors): NaN returned");
+                            "mismatch, a descriptor query on a kernel-only or item-backed store, an item query on a "
+                            "descriptor store, or an empty item query): NaN returned");
     PLACECELL_TRACE("unexplained_information", "v=" << fixed3(information.unexplained)
                     << " explainers=" << information.explainers << "/" << stored
                     << (window_size >= 0 ? " window=" + std::to_string(window_size) : std::string())

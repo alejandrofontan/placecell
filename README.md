@@ -70,7 +70,27 @@ culling, snapshots and dumps work as usual. `params.max_unexplained` (tau) bound
 leave unexplained; alternatively `params.target_alive = N` runs the same greedy order until N views
 remain (count-driven, tau ignored) — the "keep the N least redundant frames" selection.
 
-`tools/colmap_information_kernel.py <model_dir> --rgb-csv <sequence>/rgb.csv` builds such a kernel
+## Item-backed stores (covisibility)
+
+The third way to fill a store takes no descriptors and no matrix: each view is the **set of
+items it observes** (map-point ids in a SLAM system, landmark ids in an SfM model) and the kernel
+is the cosine of the indicator vectors, `K_ij = |P_i ∩ P_j| / sqrt(|P_i| |P_j|)` — PSD, unit
+diagonal, exactly 0 for views that share nothing, so no centring is needed. Sets are mutable:
+the host re-sends a view's current set whenever its observations change (points culled, fused
+or created) and the kernel follows through an inverted index; a culled view's set is frozen.
+
+```cpp
+placecell::PlaceCell cell;
+cell.set_items(kf.id, kf.map_point_ids());                     // first call decides the mode
+cell.set_items(kf.id, kf.map_point_ids());                     // later: refresh after the map changed
+auto info = cell.unexplained_information(frame.tracked_point_ids(), nullptr, /*centred=*/false);
+cell.cull_keyframes(params, [&](placecell::PlaceCell::ExternalId id) { return slam.erase(id); });
+```
+
+`add()` is refused on such a store, `descriptor()` is null, and an item set that is empty gives a
+NaN row that culling and the queries leave out until it gets items again.
+
+`tools/colmap_information_kernel.py <model_dir> --rgb-csv <sequence>/rgb.csv` builds a kernel-only store's matrix
 from a COLMAP reconstruction: the normalised mutual information between every two images'
 measurements in the joint bundle-adjustment problem (poses + points, Gauss-Newton Hessian from
 the reprojection Jacobians). It writes `kernel.npy` + `ids.csv` for
@@ -101,7 +121,8 @@ pip install .           # builds the wheel via scikit-build-core
 python -c "import placecell; print(placecell.PlaceCell())"
 ```
 
-The bindings cover the core (no MegaLoc / OpenCV), including the kernel-only path. Offline
+The bindings cover the core (no MegaLoc / OpenCV), including the kernel-only and item-backed
+paths (`set_items(id, items)`, `items(id)`, `item_mode()`, `unexplained_information_items(items)`). Offline
 selection of the N least redundant frames of a sequence from a precomputed pairwise matrix:
 
 ```python

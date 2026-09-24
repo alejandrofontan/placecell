@@ -22,7 +22,7 @@
  * explain (the information a keyframe made from it would add) — a read-only query
  * on the same kernel the culler marginalises.
  *
- * Two ways to fill a store, never mixed (the first call decides; clear() resets):
+ * Three ways to fill a store, never mixed (the first call decides; clear() resets):
  * - descriptor-backed: add(id, descriptor) grows the kernel by the new row of dots
  *   and keeps the descriptor, so unexplained_information(descriptor) can compare a
  *   new view against the store;
@@ -31,18 +31,38 @@
  *   load_npy + similarity_from_distance). There are no descriptors: descriptor() is
  *   nullptr for every id, add() is refused (ERROR log, invalid_id) and the descriptor
  *   query returns NaN — the kernel side (cull_keyframes, kernel(), centred_kernel(),
- *   snapshot(), dump()) works exactly as for a descriptor-backed store.
+ *   snapshot(), dump()) works exactly as for a descriptor-backed store;
+ * - item-backed: set_items(id, items) stores the set of opaque item ids a view observes
+ *   (a SLAM keyframe's map-point ids) and the kernel is the cosine of the two views'
+ *   indicator vectors over the items, K_ij = |P_i ∩ P_j| / sqrt(|P_i| |P_j|) — a Gram
+ *   matrix, so PSD with unit diagonal by construction, and exactly 0 for views sharing
+ *   nothing (no common-mode floor: centring is off by default here). Unlike a
+ *   descriptor, an item set may CHANGE after insertion (points get fused, culled,
+ *   re-triangulated): set_items on a known id replaces its set and updates the affected
+ *   kernel entries through an inverted index (item -> views). A culled view's set is
+ *   frozen (later set_items calls are ignored, WARN once), so the history rows the
+ *   culler needs stay exact as the alive sets move. unexplained_information(items)
+ *   answers the insertion query for a view given by its item set (a frame's tracked
+ *   map points). descriptor() is nullptr, add() and set_kernel() are refused, the
+ *   descriptor query returns NaN.
  *
  * Contracts:
  * - add() is idempotent: an id that already exists keeps its stored descriptor and
  *   returns its existing internal id.
  * - descriptor() returns a stable pointer (entries are never relocated or mutated),
- *   nullptr for an unknown id (and for every id of a kernel-only store).
+ *   nullptr for an unknown id (and for every id of a kernel-only or item-backed store).
  * - kernel()/external_ids() return snapshots (consistent with each other only when
  *   taken together by the caller in the absence of concurrent adds; row counts can
  *   only grow, so a kernel snapshot is always a leading principal submatrix of any
- *   later one).
- * - A kernel entry is NaN when the two descriptors' sizes mismatch.
+ *   later one — in the item mode the ENTRIES of that submatrix may have changed).
+ * - A kernel entry is NaN when the two descriptors' sizes mismatch, and a whole row is
+ *   NaN for an item-backed view with an empty set (0/0 cosine). Such a view is
+ *   UNUSABLE: cull_keyframes and the centring leave it out (a row is unusable when all
+ *   its off-diagonal entries are NaN; the other rows only lose that column and stay
+ *   usable), it never explains and is never scored. A descriptor query on a store with
+ *   a size mismatch still returns NaN; an item query simply skips empty views.
+ * - items() returns a stable pointer to a view's sorted item set (frozen once culled),
+ *   nullptr for an unknown id or another mode.
  * - clear() drops everything (store and kernel) — for a host system reset.
  * - Thread-safe: all methods serialise internally.
  *
@@ -168,6 +188,37 @@ public:
     // True once set_kernel has initialised this store (until clear())
     bool kernel_only() const;
 
+    // ---- Item-backed views (covisibility kernel) ---------------------------------
+
+    using ItemId = std::uint64_t;
+
+    struct ItemOptions
+    {
+        // Normalisation of the shared-item count. cosine = |P_i ∩ P_j| / sqrt(|P_i| |P_j|)
+        // (a Gram matrix, PSD, unit diagonal) is the only one implemented; the field is
+        // here so Jaccard can be added without an API change.
+        enum class Normalization { cosine } normalization{Normalization::cosine};
+    };
+
+    // Store or replace the item set of a view (the host's opaque item ids, e.g. a
+    // keyframe's map-point ids; duplicates are dropped). A new id becomes a new row —
+    // every alive view becomes its explainer — and a known id has its set replaced and
+    // the affected kernel entries updated (cost: O(|changed items| x views per item)).
+    // Idempotent for an identical set. Returns the internal id.
+    // Refused (ERROR log, invalid_id) on a descriptor-backed or kernel-only store.
+    // Ignored on a culled view (its set is frozen; WARN once, returns its internal id).
+    // An empty set is stored (WARN once) and makes the row unusable until a non-empty
+    // set replaces it.
+    InternalId set_items(ExternalId id, std::vector<ItemId> items);
+    InternalId set_items(ExternalId id, std::vector<ItemId> items, const ItemOptions& options);
+
+    // Stable pointer to a view's sorted item set (frozen for a culled view); nullptr for
+    // an unknown id or a store that is not item-backed.
+    const std::vector<ItemId>* items(ExternalId id) const;
+
+    // True once set_items has initialised this store (until clear())
+    bool item_mode() const;
+
     bool has(ExternalId id) const;
 
     // Stable pointer to the stored descriptor (append-only storage: never relocated,
@@ -234,6 +285,17 @@ public:
     Information unexplained_information(const Eigen::VectorXf& descriptor,
                                         const std::vector<ExternalId>* window = nullptr,
                                         bool centred = true) const;
+
+    // The same query for a view given by its ITEM set (item-backed store only: a
+    // frame's tracked map points before it becomes a keyframe). The query's dot with a
+    // stored view is their shared-item count over sqrt(|Q| |P_i|), read off the inverted
+    // index (cost: sum of the posting-list lengths of the query items, plus the
+    // |explainers|^3 solve). `centred` defaults to false: the covisibility kernel has no
+    // common-mode floor. NaN on a store that is not item-backed, and for an empty query
+    // (0/0 cosine; WARN once) — the host then falls back to its other triggers.
+    Information unexplained_information(const std::vector<ItemId>& items,
+                                        const std::vector<ExternalId>* window = nullptr,
+                                        bool centred = false) const;
 
     // ---- Culling -----------------------------------------------------------------
 
@@ -324,15 +386,39 @@ private:
     // they fan out to the Recorder and the Logger (src/placecell_events.cpp)
     void on_add(ExternalId id, InternalId internal, bool size_mismatch) const;
     void on_set_kernel(const KernelReport& report, const KernelOptions& options) const;
+    void on_set_items(ExternalId id, InternalId internal, std::size_t items, std::size_t added, std::size_t removed,
+                      bool new_view) const;
     void on_query(const Information& information, int stored, int window_size, bool centred, double ms) const;
     void on_cull_call(const CullParameters& parameters, const CullReport& report, bool local, double ms) const;
 
     Information compute_unexplained_information(const Eigen::VectorXf& descriptor,
                                                 const std::vector<ExternalId>* window, bool centred,
                                                 int& stored_out) const;
+    Information compute_unexplained_information(const std::vector<ItemId>& items,
+                                                const std::vector<ExternalId>* window, bool centred,
+                                                int& stored_out) const;
+    // Shared tail of the two queries. Under mutex_: the alive explainers (all, or the alive
+    // views among `window`) as internal ids, sorted and unique.
+    std::vector<int> explainers_locked(const std::vector<ExternalId>* window) const;
+    // Under mutex_: the explainer system for a query whose dots with every stored view are
+    // `k` (k_xx its self-similarity), raw or centred out of sample against the stored
+    // kernel's row/total sums; fills K_AA, k_xA, the centred/raw k_xx and the explainer ids.
+    void query_system_locked(const std::vector<int>& explainers, const Eigen::VectorXd& k, double k_xx,
+                             bool use_centred, Eigen::MatrixXd& K_AA, Eigen::VectorXd& k_xA,
+                             double& k_xx_out, std::vector<ExternalId>& explainer_ids) const;
+    // Outside the lock: the jittered solve v = k_xx - k_xA K_AA^-1 k_Ax and the best explainer.
+    static Information solve_information(Eigen::MatrixXd& K_AA, const Eigen::VectorXd& k_xA, double k_xx,
+                                         const std::vector<ExternalId>& explainer_ids);
+    // Under mutex_, item mode: rebuild kernel_ and the centring sums from the shared counts
+    // when they are stale (O(n^2)); every kernel reader calls this first.
+    void materialise_kernel_locked() const;
     // Double-centre `kernel` over the rows flagged usable and renormalise to unit
     // diagonal (no-op below 3 usable rows)
     static void centre_kernel(Eigen::MatrixXf& kernel, const std::vector<char>& usable);
+    // Rows with a complete kernel row once the culprits are removed: a row whose
+    // off-diagonal entries are all NaN (size-mismatched descriptor, empty item set) is
+    // unusable; the others are usable if finite among themselves.
+    static std::vector<char> usable_rows(const Eigen::MatrixXf& kernel);
 
     Options options_;
     mutable Profiler profiler_;
@@ -343,17 +429,28 @@ private:
     std::deque<Eigen::VectorXf> descriptors_;           // indexed by InternalId, append-only
     std::deque<ExternalId> external_ids_;               // InternalId -> ExternalId
     std::unordered_map<ExternalId, InternalId> ids_;
-    Eigen::MatrixXf kernel_;                            // n x n, grown on add()
+    // n x n. Descriptor mode: grown on add(); kernel-only: set once; item mode: derived
+    // from item_counts_ / item_norms_ by materialise_kernel_locked() (mutable: a cache).
+    mutable Eigen::MatrixXf kernel_;
     // Centring statistics of the kernel, maintained by add() so unexplained_information()
-    // never has to sweep the n x n kernel: per-row sums and the total sum (double).
-    std::deque<double> kernel_row_sums_;
-    double kernel_total_sum_{0.0};
+    // never has to sweep the n x n kernel: per-row sums and the total sum (double). In the
+    // item mode they are recomputed with the kernel (mutable for the same reason) over the
+    // usable views only; an unusable view's row sum is NaN and it is left out of the mean.
+    mutable std::deque<double> kernel_row_sums_;
+    mutable double kernel_total_sum_{0.0};
     // Descriptor size of the first stored view and whether a different size ever
     // arrived (NaN kernel entries): then no query can be compared.
     Eigen::Index descriptor_size_{0};
     bool size_mismatch_{false};
     // set_kernel() filled this store: no descriptors, add() refused, descriptor query NaN
     bool kernel_only_{false};
+    // set_items() filled this store: views are item sets, add()/set_kernel() refused
+    bool item_mode_{false};
+    std::deque<std::vector<ItemId>> items_;             // InternalId -> sorted item set (frozen once culled)
+    std::deque<std::uint32_t> item_norms_;              // InternalId -> |P_i|
+    Eigen::MatrixXi item_counts_;                       // n x n shared-item counts, diagonal = |P_i|
+    std::unordered_map<ItemId, std::vector<InternalId>> item_index_;   // item -> views observing it
+    mutable bool kernel_dirty_{false};                  // item_counts_ changed since kernel_ was built
     std::deque<char> culled_;                           // InternalId -> removed (history row)
     std::deque<char> protected_;                        // InternalId -> never cull
 };
