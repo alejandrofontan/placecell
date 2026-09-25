@@ -356,11 +356,29 @@ void PlaceCell::centre_kernel(Eigen::MatrixXf& kernel, const std::vector<char>& 
 ### `usable_rows`
 
 ```cpp
-std::vector<char> PlaceCell::usable_rows(const Eigen::MatrixXf& kernel)
+static std::vector<char> PlaceCell::usable_rows(const Eigen::MatrixXf& kernel)
 ```
-- the NaN rule the culler and the centred snapshot share: a row whose off-diagonal entries are
-  ALL NaN is a culprit (size-mismatched descriptor, empty item set) and unusable; the remaining rows
-  are usable if they are finite among themselves. Static.
+
+Decides which rows of a kernel snapshot the culler and the centring may use, so that among the
+usable rows every entry is finite. A view is unusable when it cannot be compared with any other
+view, that is when every off-diagonal entry of its row is NaN: a descriptor whose size mismatched
+the store's, or an item set that is empty. The NaN such a view leaves in every other row is not
+held against those rows, since it disappears with the culprit's column; a second pass then drops
+any survivor still NaN against another survivor.
+
+- **Mechanism**: two passes. First, a row whose off-diagonal entries are all NaN is a culprit and
+  marked unusable (for $n = 1$, a NaN diagonal). Second, any row still usable that has a NaN
+  against another usable row is marked unusable too; the scan is in ascending index order, so of
+  a stray pair only the lower index is dropped. NaN can only enter the kernel as a whole row and
+  column, so the second pass is defensive
+- **Reads**: none
+- **Writes**: none
+- **Lock**: none; the caller passes a snapshot it already owns
+- **Cost**: time O(n²), space O(n) for the result
+- **Called from**: [`cull_keyframes`](#cull_keyframes) on the copied kernel, before
+  [`centre_kernel`](#centre_kernel); [`snapshot`](#snapshot) when `centred` is requested, so the
+  culler and the centred snapshot agree on the usable set. The item query does not call it: it
+  drops empty views by `item_norms_ == 0`, which coincides with this rule in item mode
 
 ### `kernel`
 
