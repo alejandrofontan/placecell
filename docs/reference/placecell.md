@@ -346,12 +346,32 @@ PlaceCell::Snapshot PlaceCell::snapshot(const bool centred) const
 ### `centre_kernel`
 
 ```cpp
-void PlaceCell::centre_kernel(Eigen::MatrixXf& kernel, const std::vector<char>& usable)
+static void PlaceCell::centre_kernel(Eigen::MatrixXf& kernel, const std::vector<char>& usable)
 ```
-- double-centres the kernel in place over the usable rows, `K_c = J S J` with `J = I − 11ᵀ/m`, and
-  renormalises to unit diagonal (in double, diagonal floored at `1e-9`): the correlation of the
-  mean-centred descriptors. Does nothing with fewer than 3 usable rows. Unusable rows are left as
-  they are. Static.
+
+Double-centres a kernel snapshot in place over its usable rows and renormalises it to unit
+diagonal: the correlation of the mean-centred descriptors, which removes the common-mode floor of
+image embeddings so that unrelated pairs sit near 0 and near-duplicates stay high. The result is
+PSD of rank $m - 1$, which is why every solve on it adds a diagonal jitter. Rows marked unusable
+are left exactly as they were.
+
+- **Mechanism**: collects the $m$ usable indices and returns unchanged when $m < 3$. Copies the
+  usable block into an $m \times m$ double matrix $S$ and forms
+  $C_{ij} = S_{ij} - r_i - r_j + t$, with $r$ the row means and $t$ the mean of $r$ (equivalently
+  $C = J S J$, $J = I - \tfrac{1}{m}\mathbf{1}\mathbf{1}^{\!\top}$); then writes back
+  $C_{ij} / \sqrt{C_{ii} C_{jj}}$ as float, with each diagonal floored at $10^{-9}$ before the
+  square root. This is the same formula [`query_system_locked`](#query_system_locked) applies out
+  of sample from the maintained row and total sums, so the culler and the insertion query centre
+  identically; the two thresholds differ in what they count (usable views $m$ here, stored views
+  $n$ there)
+- **Reads**: none
+- **Writes**: none (its first argument, in place)
+- **Lock**: none; the caller passes a snapshot it already owns
+- **Cost**: time O(m²), space O(m²) for the double copy
+- **Called from**: [`cull_keyframes`](#cull_keyframes) when `parameters.centred` is set, on the
+  copied kernel after [`usable_rows`](#usable_rows); [`snapshot`](#snapshot) when `centred` is
+  requested, hence [`centred_kernel`](#centred_kernel), [`dump`](#dump) and the viz module, whose
+  centred kernel therefore carries raw values in any unusable row
 
 ### `usable_rows`
 
