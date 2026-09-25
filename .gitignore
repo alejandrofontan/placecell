@@ -91,3 +91,5 @@ placecell_kernel_out/
 
 # mkdocs
 site/
+# paper repo clone (pixi run paper-clone)
+paper/

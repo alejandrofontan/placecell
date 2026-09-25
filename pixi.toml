@@ -48,6 +48,7 @@ default = []
 megaloc = { features = ["megaloc"], solve-group = "megaloc" }
 export-megaloc = { features = ["export-megaloc", "megaloc"], solve-group = "megaloc" }
 docs = { features = ["docs"], no-default-feature = true }
+paper = { features = ["paper"], no-default-feature = true }
 
 [feature.megaloc]
 channels = ["https://repo.prefix.dev/spqr-tests"]
@@ -124,3 +125,16 @@ docs-serve = { cmd = "mkdocs serve", env = { DISABLE_MKDOCS_2_WARNING = "true" }
 docs-build = { cmd = "mkdocs build --strict", env = { DISABLE_MKDOCS_2_WARNING = "true" } }
 docs-links = { cmd = "python docs/tools/resolve_links.py" }
 docs-check = { cmd = "python docs/tools/resolve_links.py --check && mkdocs build --strict", env = { DISABLE_MKDOCS_2_WARNING = "true" } }
+
+[feature.paper.dependencies]
+pixi = "*"
+git = "*"
+
+[feature.paper.tasks]
+paper-clone = "test -d paper || git clone git@github.com:alejandrofontan/arxiv26-PlaceCell.git paper"
+paper-build = { cmd = "pixi run build", cwd = "paper", depends-on = ["paper-clone"] }
+paper-rebuttal = { cmd = "pixi run rebuttal", cwd = "paper", depends-on = ["paper-clone"] }
+paper-watch = { cmd = "pixi run watch", cwd = "paper", depends-on = ["paper-clone"] }
+paper-clean = { cmd = "pixi run clean", cwd = "paper", depends-on = ["paper-clone"] }
+paper-pull = { cmd = "pixi run pull", cwd = "paper", depends-on = ["paper-clone"] }
+paper-status = { cmd = "pixi run status", cwd = "paper", depends-on = ["paper-clone"] }
