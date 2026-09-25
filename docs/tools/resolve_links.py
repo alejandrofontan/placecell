@@ -3,9 +3,9 @@
 
 Convention (see docs/reference/README.md, "Links into the code"):
 
-    [`track`](https://github.com/alejandrofontan/AllFeature-VSLAM/blob/main/src/Tracking.cc#L152)
-    [`Tracking.cc`](https://github.com/.../src/Tracking.cc#L238 "else if (emergency_keyframe_)")
-    [`# Main loop`](https://github.com/.../src/LoopClosing.cc#L73)
+    [`cull_keyframes`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L854)
+    [`placecell.cpp`](https://github.com/.../src/placecell.cpp#L714 "kernel_dirty_ = true")
+    [`# Culling`](https://github.com/.../src/placecell.cpp#L850)
 
 The line number is derived, never authoritative. What identifies the target is, in order:
 
@@ -16,13 +16,15 @@ The line number is derived, never authoritative. What identifies the target is, 
 
 When several lines match, the one nearest to the current line number wins. Links whose text is
 just the file name and that carry no title cannot be resolved and are reported. Relative targets
-(`src/File.cc#L1`) are rewritten to the absolute GitHub form so the same page works on GitHub and
-on the MkDocs site.
+(`src/placecell.cpp#L1`) are rewritten to the absolute GitHub form so the same page works on
+GitHub and on the MkDocs site. Linkable targets are files under `src/`, `include/`, `python/`,
+`examples/` and `tools/`, plus `CMakeLists.txt` and `pixi.toml`; a link to any other path is
+left untouched.
 
 Usage:
     python docs/tools/resolve_links.py            # rewrite in place, print a report
     python docs/tools/resolve_links.py --check    # exit 1 if anything would change or is unresolved
-    python docs/tools/resolve_links.py docs/reference/Tracking.md   # one file
+    python docs/tools/resolve_links.py docs/reference/placecell.md   # one file
 """
 from __future__ import annotations
 
