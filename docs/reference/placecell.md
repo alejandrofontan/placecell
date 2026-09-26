@@ -11,7 +11,8 @@ the cull callback is invoked with the lock released. The event hooks (`on_add`, 
 that feed the Recorder and the Logger live in `src/placecell_events.cpp`. The sources carry no
 `// #` section banners, so this page groups the functions by call-graph order.
 
-Sources: `src/placecell.cpp`, `src/placecell_events.cpp`, `include/placecell/placecell.h`.
+Sources: `src/placecell.cpp`, `src/placecell_events.cpp`, `src/placecell_cull.cpp`, `include/placecell/placecell.h`;
+the gram-greedy method has its own page, [`placecell_gram_greedy.md`](placecell_gram_greedy.md).
 Reading notes: [`docs/review/placecell.md`](../review/placecell.md). The contracts (idempotence,
 pointer stability, NaN semantics, thread-safety) are in the header comment and are not repeated
 here; the culler's derivation is in the comment block at the top of its body.
