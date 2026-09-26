@@ -1,6 +1,6 @@
 # Review — PlaceCell
 
-- **Sources:** `src/placecell.cpp`, `src/placecell_events.cpp`, `include/placecell/placecell.h`
+- **Sources:** `src/placecell.cpp`, `src/placecell_events.cpp`, `src/placecell_cull.cpp`, `include/placecell/placecell.h`
 - **Reviewer:** Alejandro Fontan
 - **Last reviewed at:** `ccc5c8c` (2026-09-25) — 3 of 41 functions read
 
@@ -11,7 +11,6 @@
 | `PlaceCell::centre_kernel` | [placecell.cpp#L287](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L287 "PlaceCell::centre_kernel(") | question | m vs n threshold, silent floor, see 2026-09-25 |
 | `PlaceCell::usable_rows` | [placecell.cpp#L314](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L314 "PlaceCell::usable_rows(") | ok | second pass defensive, see 2026-09-25 |
 | `PlaceCell::materialise_kernel_locked` | [placecell.cpp#L735](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735 "PlaceCell::materialise_kernel_locked(") | question | incremental rebuild, see 2026-09-25  |
-| `PlaceCell::cull_keyframes` | [placecell.cpp#L854](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L854 "PlaceCell::cull_keyframes(") | unread |  |
 
 ## Notes
 
@@ -32,7 +31,7 @@
 - Centring the covisibility kernel brings nothing (no common mode, exact zeros) and costs
   sparsity plus the rank-deficiency degeneracies; `false` is the right default. The density bias
   of the item kernel is a normalisation question, not a centring one; note it under `set_items`.
-  
+
 ### 2026-09-25 — usable_rows (at `ccc5c8c`)
 
 - The rule is "unusable when NaN against every other view", not "any NaN in the row": a culprit
