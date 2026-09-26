@@ -496,6 +496,7 @@ placecell has no settings file. Every tunable is a struct with member initialise
 | `KernelOptions` | `clip_to_psd` | false | [`set_kernel`](#set_kernel) | clip negative eigenvalues at 0 and renormalise to unit diagonal |
 | `ItemOptions` | `normalization` | `cosine` | [`set_items`](#set_items) | accepted, ignored: cosine is the only normalisation |
 | `CullParameters` | `method` | `"gram-greedy"` | [`cull_keyframes`](#cull_keyframes) | the only method; anything else throws |
+| `CullParameters` | `objective` | `"unique"` | `gram_greedy_propose` ([`placecell_gram_greedy.md`](placecell_gram_greedy.md#gram_greedy_propose)) | ranking of the feasible candidates: `unique`, `minimax` or `total-loss` |
 | `CullParameters` | `max_unexplained` | 0.1 | [`cull_keyframes`](#cull_keyframes) | tau: the most any alive or history view may be left unexplained |
 | `CullParameters` | `centred` | true | [`cull_keyframes`](#cull_keyframes) | marginalise on the double-centred kernel |
 | `CullParameters` | `min_keyframes` | 10 | [`cull_keyframes`](#cull_keyframes) | never cull below this many alive views in scope |

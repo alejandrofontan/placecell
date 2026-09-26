@@ -117,7 +117,12 @@ PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& sc
 - scan order is the alive position, and a candidate only replaces the running best with a strictly
   smaller `v_i`, so ties go to the lowest kernel row (insertion order). The history check breaks at
   the first veto. Read-only on the state.
-- count-driven mode (`scope.tau = +inf`): neither test can fail; a plain argmin of `v_i`.
+- count-driven mode (`scope.tau = +inf`): neither test can fail; a plain argmin of the objective.
+- `scope.objective` selects what the feasible candidates are ranked by: `unique` (default) is `v_i`;
+  `minimax` is `worst_after`; `total-loss` is `v_i` plus every history price plus, for every other
+  alive `j`, `1/(M_jj − M_ji²/M_ii) − 1/M_jj`, the rise of its unique information (an extra O(|A|)
+  per candidate). Ties go to the smaller `v_i`, then the lowest kernel row. The feasibility test is
+  the same for all three.
 - called from: [`cull_gram_greedy`](#cull_gram_greedy), once per loop iteration.
 
 ### `gram_greedy_downdate`
@@ -150,6 +155,7 @@ plus two class constants in `include/placecell/placecell.h`.
 | `CullScope` | `tau` | `max_unexplained`, or +inf in count-driven mode | propose, driver | the budget of every view; `history_over_budget` counts rows above it |
 | `CullScope` | `stop_at` | `min_keyframes`, or `max(min_keyframes, target_alive)` | driver | the loop stops at this many alive views in scope |
 | `CullScope` | `max_per_call` | `CullParameters::max_per_call` | driver | cap on accepted culls (0 = unlimited) |
+| `CullScope` | `objective` | `CullParameters::objective` parsed to `CullObjective` (`unique`) | [`gram_greedy_propose`](#gram_greedy_propose) | what the feasible candidates are ranked by: `v_i`, the worst view after the cull, or the total loss |
 | `CullScope` | `centred`, `local` | `CullParameters::centred`, window given | driver | the issue-#5 warning fires only when centred, map scope, no history |
 | constant | [`gram_greedy_jitter`](https://github.com/alejandrofontan/placecell/blob/main/include/placecell/placecell.h#L493) | `1e-6` | seed | added to the diagonal of `K_AA`; the query's `solve_information` uses the same value |
 | constant | [`gram_greedy_over_budget_slack`](https://github.com/alejandrofontan/placecell/blob/main/include/placecell/placecell.h#L494) | `0.01` | propose | the most a history row already above tau may deteriorate per cull |

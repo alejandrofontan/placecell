@@ -315,6 +315,13 @@ public:
         // Culling method; "gram-greedy" (the joint-information greedy rule on the
         // Gram kernel) is the only one implemented.
         std::string method{"gram-greedy"};
+        // What gram-greedy minimises among the feasible candidates (those that keep
+        // every view within tau): "unique" = the candidate's own unique information
+        // v_i = 1/M_ii; "minimax" = the worst unexplained view after the cull;
+        // "total-loss" = v_i plus the rise of every other view's unexplained
+        // information (history prices and alive frames). Ties go to the smaller v_i,
+        // then the lowest kernel row.
+        std::string objective{"unique"};
         // tau: max unexplained information any view (alive or history) may be left with
         float max_unexplained{0.1f};
         // Double-centre the kernel over the usable views (Pearson correlation of the
@@ -419,6 +426,9 @@ private:
     enum class CullMethod { gram_greedy };
     // CullParameters::method -> CullMethod; throws std::invalid_argument on an unknown name
     static CullMethod parse_cull_method(const std::string& name);
+    enum class CullObjective { unique, minimax, total_loss };
+    // CullParameters::objective -> CullObjective; throws std::invalid_argument on an unknown name
+    static CullObjective parse_cull_objective(const std::string& name);
     // What the shell hands a method. Indices are kernel rows of `similarity` (raw or
     // centred, taken under the lock); alive/history are the usable rows in scope;
     // candidate[a] says whether alive[a] may be proposed (not protected).
@@ -434,6 +444,7 @@ private:
         int max_per_call{0};      // 0 = unlimited
         bool centred{false};
         bool local{false};
+        CullObjective objective{CullObjective::unique};
     };
     // Executes a cull for a method: proposes a kernel row to the host with mutex_
     // released, marks it culled on acceptance, accumulates the callback time (which the
@@ -489,12 +500,13 @@ private:
         int index;                    // position in scope.alive, -1 = no feasible candidate
         double unique_information;    // v_i = 1/M_ii
         double worst_after;           // max unexplained view right after the cull
+        double score;                 // the value of scope.objective that won (v_i, worst_after or the total loss)
     };
     static constexpr double gram_greedy_jitter = 1e-6;              // K_AA diagonal (same as the query's)
     static constexpr double gram_greedy_over_budget_slack = 0.01;   // max deterioration of a history row already above tau
     // The O(|A|^3) step: M = K_AA^-1, then W and v_h for the history in scope
     static GramGreedyState gram_greedy_seed(const CullScope& scope);
-    // The greedy rule: the feasible candidate with the smallest v_i (index -1 when none)
+    // The greedy rule: the feasible candidate with the smallest scope.objective (index -1 when none)
     static GramGreedyProposal gram_greedy_propose(const CullScope& scope, const GramGreedyState& state,
                                                   const std::vector<char>& candidate);
     // After an accepted cull: rank-one downdate of M and W, v_h prices, the view joins the history

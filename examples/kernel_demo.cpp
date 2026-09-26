@@ -18,7 +18,7 @@
  *
  * Usage:
  *   kernel_demo <matrix.npy> [--kind similarity|squared-euclidean|cosine-distance|euclidean]
- *               [--tau T] [--min-keyframes N] [--raw] [--clip] [--no-psd-check]
+ *               [--tau T] [--min-keyframes N] [--objective unique|minimax|total-loss] [--raw] [--clip] [--no-psd-check]
  *               [--out <dir>] [--rgb-csv <file>] [--verbosity off|error|warn|info|debug|trace]
  *
  * Defaults: --kind squared-euclidean (VPR-LAB), --tau 0.3, --min-keyframes 5, centred
@@ -58,6 +58,7 @@ int main(int argc, char** argv)
     float tau = 0.3f;
     int min_keyframes = 5;
     bool centred = true;
+    std::string objective = "unique";
     placecell::PlaceCell::KernelOptions kernel_options;
     placecell::PlaceCell::Options options;
     options.name = "kernel_demo";
@@ -75,6 +76,7 @@ int main(int argc, char** argv)
         }
         else if(std::strcmp(argv[i], "--tau") == 0) tau = float(std::atof(next("--tau")));
         else if(std::strcmp(argv[i], "--min-keyframes") == 0) min_keyframes = std::atoi(next("--min-keyframes"));
+        else if(std::strcmp(argv[i], "--objective") == 0) objective = next("--objective");
         else if(std::strcmp(argv[i], "--raw") == 0) centred = false;
         else if(std::strcmp(argv[i], "--clip") == 0) kernel_options.clip_to_psd = true;
         else if(std::strcmp(argv[i], "--no-psd-check") == 0) kernel_options.psd_check = false;
@@ -92,7 +94,7 @@ int main(int argc, char** argv)
     }
     if(matrix_path.empty())
     {
-        std::fprintf(stderr, "usage: kernel_demo <matrix.npy> [--kind K] [--tau T] [--min-keyframes N] [--raw] [--clip] "
+        std::fprintf(stderr, "usage: kernel_demo <matrix.npy> [--kind K] [--tau T] [--min-keyframes N] [--objective unique|minimax|total-loss] [--raw] [--clip] "
                              "[--no-psd-check] [--out dir] [--rgb-csv file] [--ids file] [--verbosity L]\n");
         return 1;
     }
@@ -205,6 +207,7 @@ int main(int argc, char** argv)
     cull_parameters.max_unexplained = tau;
     cull_parameters.centred = centred;
     cull_parameters.min_keyframes = min_keyframes;
+    cull_parameters.objective = objective;
     cull_parameters.protect_last = 1;
     cull_parameters.max_per_call = 0;
     cell.recorder().set_thresholds(tau, 0.0f);

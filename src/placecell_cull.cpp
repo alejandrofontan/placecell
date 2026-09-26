@@ -36,6 +36,19 @@ PlaceCell::CullMethod PlaceCell::parse_cull_method(const std::string& name)
                                 + name + "' (options: gram-greedy)");
 }
 
+PlaceCell::CullObjective PlaceCell::parse_cull_objective(const std::string& name)
+{
+    if(name == "unique")
+        return CullObjective::unique;
+    if(name == "minimax")
+        return CullObjective::minimax;
+    if(name == "total-loss")
+        return CullObjective::total_loss;
+    PLACECELL_ERROR("cull_keyframes", "unknown objective '" << name << "' (options: unique, minimax, total-loss)");
+    throw std::invalid_argument("placecell::PlaceCell::cull_keyframes: unknown objective '"
+                                + name + "' (options: unique, minimax, total-loss)");
+}
+
 // ---- Shell ---------------------------------------------------------------------------
 
 PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters,
@@ -69,6 +82,7 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     // scope (never below min_keyframes). This is the offline "keep the N least redundant
     // views" selection; the report's alive_after says how many actually survived.
     const CullMethod method = parse_cull_method(parameters.method);
+    const CullObjective objective = parse_cull_objective(parameters.objective);
 
     // Profile: the whole call (host callback time excluded) plus its stages as sub-rows.
     // Sizes: size_a = alive views in scope, size_b = history rows in scope.
@@ -169,6 +183,7 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     scope.max_per_call = parameters.max_per_call;
     scope.centred = parameters.centred;
     scope.local = local;
+    scope.objective = objective;
 
     CullExecutor execute(*this, try_cull, scope.row_ids);
     switch(method)

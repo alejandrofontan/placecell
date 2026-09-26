@@ -49,9 +49,13 @@ PlaceCell::GramGreedyState PlaceCell::gram_greedy_seed(const CullScope& scope)
 PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& scope, const GramGreedyState& state,
                                                              const std::vector<char>& candidate)
 {
-    // Score every candidate: unique information v_i = 1/M_ii and the worst unexplained
-    // view after culling it. Feasible iff v_i <= tau and no history row is raised by more
-    // than max(tau - v_h, slack). Ties go to the lowest kernel row (insertion order).
+    // Feasible iff v_i = 1/M_ii <= tau and no history row is raised by more than
+    // max(tau - v_h, slack). Among the feasible candidates the winner minimises
+    // scope.objective: v_i itself ("unique"), the worst unexplained view after the cull
+    // ("minimax"), or v_i plus the rise of every other view ("total-loss": the history
+    // prices W_hi^2 / M_ii and, for each alive j, 1/(M_jj - M_ji^2/M_ii) - 1/M_jj, the
+    // diagonal of the downdated M). Ties go to the smaller v_i, then to the lowest
+    // kernel row (insertion order).
     //
     // ONLINE THRESHOLD CHANGES: culling is irreversible, so the history invariant
     // v_h <= tau only holds for the tau in force when h was culled. If tau is LOWERED
@@ -63,26 +67,46 @@ PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& sc
     // of unrelated candidates). RAISING tau would otherwise cull everything newly
     // feasible in one burst; max_per_call spreads that over successive calls.
     //
-    // COUNT-DRIVEN (scope.tau = +inf): neither test can fail; a plain argmin of v_i.
+    // COUNT-DRIVEN (scope.tau = +inf): neither test can fail; a plain argmin of the objective.
     const double tau = scope.tau;
     const int na = int(scope.alive.size());
-    GramGreedyProposal best{-1, std::numeric_limits<double>::infinity(), 0.0};
+    const CullObjective objective = scope.objective;
+    constexpr double inf = std::numeric_limits<double>::infinity();
+    GramGreedyProposal best{-1, inf, 0.0, inf};
     for(int a = 0; a < na; a++){
         if(state.removed[a] || !candidate[a]) continue;
         const double M_aa = state.M(a, a);
         if(M_aa <= 0.0) continue;
         const double v_i = 1.0 / M_aa;
-        if(v_i > tau || v_i >= best.unique_information) continue;
+        if(v_i > tau) continue;
+        if(objective == CullObjective::unique && v_i >= best.score) continue;   // cannot win: skip the history scan
         bool feasible = true;
         double worst = v_i;
+        double loss = v_i;
         for(std::size_t h = 0; h < state.W_rows.size(); h++){
             const double w = state.W_rows[h](a);
             const double price = w * w / M_aa;
             if(price > std::max(tau - state.v_h[h], gram_greedy_over_budget_slack)){ feasible = false; break; }
             worst = std::max(worst, state.v_h[h] + price);
+            loss += price;
         }
-        if(feasible)
-            best = GramGreedyProposal{a, v_i, worst};
+        if(!feasible) continue;
+        double score = v_i;
+        if(objective == CullObjective::minimax)
+            score = worst;
+        else if(objective == CullObjective::total_loss){
+            for(int j = 0; j < na; j++){
+                if(j == a || state.removed[j] || state.M(j, j) <= 0.0) continue;
+                const double M_jj = state.M(j, j);
+                const double M_ja = state.M(j, a);
+                const double M_jj_after = M_jj - M_ja * M_ja / M_aa;
+                if(M_jj_after <= 0.0){ loss = inf; break; }
+                loss += 1.0 / M_jj_after - 1.0 / M_jj;
+            }
+            score = loss;
+        }
+        if(score < best.score || (score == best.score && v_i < best.unique_information))
+            best = GramGreedyProposal{a, v_i, worst, score};
     }
     return best;
 }
