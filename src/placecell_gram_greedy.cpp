@@ -49,8 +49,8 @@ PlaceCell::GramGreedyState PlaceCell::gram_greedy_seed(const CullScope& scope)
 PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& scope, const GramGreedyState& state,
                                                              const std::vector<char>& candidate)
 {
-    // Feasible iff v_i = 1/M_ii <= tau and no history row is raised by more than
-    // max(tau - v_h, slack). Among the feasible candidates the winner minimises
+    // Feasible iff v_i = 1/M_ii <= tau and no history row is raised past tau (a row
+    // already above tau: by more than slack). Among the feasible candidates the winner minimises
     // scope.objective: v_i itself ("unique"), the worst unexplained view after the cull
     // ("minimax"), or v_i plus the rise of every other view ("total-loss": the history
     // prices W_hi^2 / M_ii and, for each alive j, 1/(M_jj - M_ji^2/M_ii) - 1/M_jj, the
@@ -61,11 +61,11 @@ PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& sc
     // v_h <= tau only holds for the tau in force when h was culled. If tau is LOWERED
     // afterwards, rows with v_h > tau would make every candidate infeasible under a
     // plain "v_h + price <= tau" test and jam the culler. The constraint is therefore
-    // relative: a cull may not raise any history row by more than max(tau - v_h,
-    // slack), i.e. rows within budget behave as before and rows already over budget
-    // only protect their actual explainers (slack absorbs the dense-W numerical dust
-    // of unrelated candidates). RAISING tau would otherwise cull everything newly
-    // feasible in one burst; max_per_call spreads that over successive calls.
+    // split: a row within budget may not be raised past tau (price <= tau - v_h), a row
+    // already over budget may not deteriorate by more than slack, so it only protects
+    // its actual explainers (slack absorbs the dense-W numerical dust of unrelated
+    // candidates). RAISING tau would otherwise cull everything newly feasible in one
+    // burst; max_per_call spreads that over successive calls.
     //
     // COUNT-DRIVEN (scope.tau = +inf): neither test can fail; a plain argmin of the objective.
     const double tau = scope.tau;
@@ -86,7 +86,8 @@ PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& sc
         for(std::size_t h = 0; h < state.W_rows.size(); h++){
             const double w = state.W_rows[h](a);
             const double price = w * w / M_aa;
-            if(price > std::max(tau - state.v_h[h], gram_greedy_over_budget_slack)){ feasible = false; break; }
+            const double allowed = state.v_h[h] > tau ? gram_greedy_over_budget_slack : tau - state.v_h[h];
+            if(price > allowed){ feasible = false; break; }
             worst = std::max(worst, state.v_h[h] + price);
             loss += price;
         }

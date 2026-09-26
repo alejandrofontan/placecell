@@ -287,8 +287,8 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
   `protect_last` the last n rows in insertion order, `set_protected` any view; protected views
   still act as explainers.
 - feasibility of a candidate: `v_i ≤ tau`, and for every history row the price `W_hi² / M_ii` of
-  removing it must not exceed `max(tau − v_h, 0.01)`; the slack lets rows already above tau (tau was
-  lowered between calls) deteriorate by at most 0.01. The candidate with the smallest feasible
+  removing it must not exceed `tau − v_h`, or `0.01` for a row already above tau (tau was lowered
+  between calls), which may deteriorate by at most that slack. The candidate with the smallest feasible
   `v_i` is proposed; none feasible ends the loop.
 - after an accepted cull: rank-one downdate `M' = M − m mᵀ / M_ii`, every history row
   `W_h' = W_h − (W_hi / M_ii) m` and `v_h += W_hi² / M_ii`, the row and column of the culled view

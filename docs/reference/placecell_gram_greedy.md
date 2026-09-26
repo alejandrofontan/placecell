@@ -24,7 +24,7 @@ flowchart TD
     SHELL([cull_keyframes: CullScope · CullExecutor · CullReport]) --> SEED["<b>gram_greedy_seed</b><br/>· K_AA + jitter, M = K_AA⁻¹ (LDLT)<br/>· W_h = k_hA M, v_h = K_hh − W_h·k_hA per history row"]
     SEED --> LOOP{alive > stop_at<br/>and culls < max_per_call?}
     LOOP -- no --> REP["report: alive ids + 1/M_ii,<br/>worst history, rows over tau"]
-    LOOP -- yes --> PROP["<b>gram_greedy_propose</b><br/>· v_i = 1/M_ii ≤ tau<br/>· price W_hi²/M_ii ≤ max(tau − v_h, slack) ∀ h<br/>· smallest feasible v_i"]
+    LOOP -- yes --> PROP["<b>gram_greedy_propose</b><br/>· v_i = 1/M_ii ≤ tau<br/>· price W_hi²/M_ii ≤ tau − v_h ∀ h (slack if v_h > tau)<br/>· smallest feasible v_i"]
     PROP -- none feasible --> REP
     PROP -- proposal --> EXEC{"CullExecutor(alive[i])<br/>host erased it?"}
     EXEC -- no --> SKIP["candidate[i] = 0"] --> LOOP
@@ -106,11 +106,11 @@ PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& sc
 ```
 - the greedy rule: over the alive positions that are candidates and not removed, with `M_ii > 0`,
   the one with the smallest `v_i = 1/M_ii` such that `v_i ≤ tau` and, for every history row, the
-  price `W_hi² / M_ii` of removing it does not exceed `max(tau − v_h, gram_greedy_over_budget_slack)`.
+  price `W_hi² / M_ii` of removing it does not exceed `tau − v_h`, or `gram_greedy_over_budget_slack` for a row already above tau.
   Returns index −1 when none qualifies.
 - the constraint is relative to each history row on purpose: a row already above tau (tau was
   lowered between calls) does not veto every candidate, only those that would raise it by more than
-  the slack. Rows within budget behave as `v_h + price ≤ tau`.
+  the slack. Rows within budget are never raised past tau.
 - `worst_after` of the proposal is `max(v_i, max_h(v_h + price_h))`, the largest unexplained view
   right after the cull; computed from the pre-cull state, exact by the same identity the downdate
   applies.
@@ -158,4 +158,4 @@ plus two class constants in `include/placecell/placecell.h`.
 | `CullScope` | `objective` | `CullParameters::objective` parsed to `CullObjective` (`unique`) | [`gram_greedy_propose`](#gram_greedy_propose) | what the feasible candidates are ranked by: `v_i`, the worst view after the cull, or the total loss |
 | `CullScope` | `centred`, `local` | `CullParameters::centred`, window given | driver | the issue-#5 warning fires only when centred, map scope, no history |
 | constant | [`gram_greedy_jitter`](https://github.com/alejandrofontan/placecell/blob/main/include/placecell/placecell.h#L493) | `1e-6` | seed | added to the diagonal of `K_AA`; the query's `solve_information` uses the same value |
-| constant | [`gram_greedy_over_budget_slack`](https://github.com/alejandrofontan/placecell/blob/main/include/placecell/placecell.h#L494) | `0.01` | propose | the most a history row already above tau may deteriorate per cull |
+| constant | [`gram_greedy_over_budget_slack`](https://github.com/alejandrofontan/placecell/blob/main/include/placecell/placecell.h#L494) | `0.01` | propose | the most a history row already above tau may deteriorate per cull; rows within budget are bounded by `tau − v_h` instead |
