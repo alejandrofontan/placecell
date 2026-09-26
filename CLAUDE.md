@@ -18,7 +18,7 @@ Design goal for every change: placecell must stay independent of any particular 
 |---|---|
 | this file | how to build, verify and change things; the architecture in one screen |
 | header comments in `include/placecell/*.h` | the **contracts** (idempotence, pointer stability, thread-safety, NaN semantics) — update them when behaviour changes |
-| the comment block at the top of `cull_keyframes` in `src/placecell.cpp` | the culler's derivation, centring rationale and threshold-change handling — read before touching the loop |
+| the comment blocks in `src/placecell_cull.cpp` (the shell: centring, scope, count-driven mode) and on `gram_greedy_propose` / `gram_greedy_downdate` in `src/placecell_gram_greedy.cpp` (threshold-change handling, downdate order); the derivation itself is `docs/reference/placecell_gram_greedy.md` + `paper/sec/03_methodology.tex` | read before touching the culler |
 | `docs/notes/2026-09-25_kernels.md` | dated reference numbers, sweeps and design decisions for the three store modes, the COLMAP kernel and the tools (append a dated paragraph, never rewrite) |
 | `README.md` | user-facing usage, C++ and Python snippets |
 | `docs/megaloc.md` | placeholder TODO |

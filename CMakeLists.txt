@@ -54,6 +54,8 @@ endif()
 add_library(placecell
     src/placecell.cpp
     src/placecell_events.cpp
+    src/placecell_cull.cpp
+    src/placecell_gram_greedy.cpp
     src/log.cpp
     src/profiler.cpp
     src/recorder.cpp
