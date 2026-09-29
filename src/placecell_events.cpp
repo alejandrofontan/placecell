@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -68,8 +69,9 @@ void PlaceCell::on_set_kernel(const KernelReport& report, const KernelOptions& o
                        << (options.symmetrise ? "; the average of S and S^T was stored" : "; stored as is"));
     if(report.negative_eigenvalues > 0 && !report.clipped)
         PLACECELL_WARN("set_kernel", report.negative_eigenvalues << " negative eigenvalues (smallest "
-                       << fixed3(report.min_eigenvalue) << "): the kernel is not PSD, unique-information scores of "
-                       "cull_keyframes may degrade (issue #3); KernelOptions::clip_to_psd projects it");
+                       << fixed3(report.min_eigenvalue) << "): the kernel is not PSD, so cull_keyframes is broken "
+                       "rather than degraded: views whose inverse pivot is not positive are skipped without a word "
+                       "(issue #3); KernelOptions::clip_to_psd projects it");
 }
 
 void PlaceCell::on_query(const Information& information, const int stored, const int window_size,
@@ -99,8 +101,10 @@ void PlaceCell::on_query(const Information& information, const int stored, const
 void PlaceCell::on_cull_call(const CullParameters& parameters, const CullReport& report, const bool local,
                              const double ms) const
 {
+    // The tau in force: none (NaN) in count-driven mode, where the culler runs with tau = +inf
+    const float tau = parameters.target_alive > 0 ? std::numeric_limits<float>::quiet_NaN() : parameters.max_unexplained;
     Recorder::CullCall call;
-    call.tau = parameters.max_unexplained;
+    call.tau = tau;
     call.centred = parameters.centred;
     call.local = local;
     call.views_total = report.views_total;
@@ -121,7 +125,7 @@ void PlaceCell::on_cull_call(const CullParameters& parameters, const CullReport&
         cull.unique_information = view.unique_information;
         cull.worst_unexplained_after = view.worst_unexplained_after;
         cull.alive_after = view.alive_after;
-        cull.tau = parameters.max_unexplained;
+        cull.tau = tau;
         culls.push_back(cull);
     }
     recorder_.record_cull_call(std::move(call), culls);

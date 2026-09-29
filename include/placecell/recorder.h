@@ -61,14 +61,14 @@ public:
         float unique_information{0.0f};
         float worst_unexplained_after{0.0f};
         int alive_after{0};
-        float tau{0.0f};
+        float tau{0.0f};                 // the tau in force; NaN in count-driven mode
     };
 
     struct CullCall
     {
         std::uint64_t index{0};
         double time_s{0.0};
-        float tau{0.0f};
+        float tau{0.0f};                 // the tau in force; NaN in count-driven mode
         bool centred{true};
         bool local{false};
         int views_total{0};

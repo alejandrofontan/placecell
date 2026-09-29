@@ -412,11 +412,12 @@ cv::Mat render_alive_information(const Recorder& recorder, const AliveStyle& sty
         cv::rectangle(image, cv::Point(x0, axes.y(std::min(1.0f, v))), cv::Point(x1, axes.plot.y + axes.plot.height - 1),
                       above ? kInformation : kTextDim, cv::FILLED);
     }
-    dashed_line(image, cv::Point(axes.plot.x, axes.y(call->tau)), cv::Point(axes.plot.x + axes.plot.width, axes.y(call->tau)), kTau);
+    if(!std::isnan(call->tau))   // NaN: count-driven call, no tau in force
+        dashed_line(image, cv::Point(axes.plot.x, axes.y(call->tau)), cv::Point(axes.plot.x + axes.plot.width, axes.y(call->tau)), kTau);
 
     std::ostringstream title;
     title << "unique information of alive views after cull #" << call->index << "  alive=" << n << "  above tau=" << over
-          << "  tau=" << fixed(call->tau) << "  culled=" << call->culled << "/" << call->candidates
+          << (std::isnan(call->tau) ? std::string("  count-driven") : "  tau=" + fixed(call->tau)) << "  culled=" << call->culled << "/" << call->candidates
           << (call->local ? "  [local]" : "  [map]") << (call->centred ? " centred" : " raw");
     put_text(image, title.str(), cv::Point(8, 18));
     return image;
