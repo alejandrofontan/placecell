@@ -286,7 +286,7 @@ def pairwise_mutual_information(infos: list, lambda_p: float, chunk_incidences: 
 
     With the single-image reductions in hand, a pair only needs its shared points:
         I_ab = 1/2 [ logdet A_a + logdet A_b - logdet S_ab
-                     - sum_shared ( logdet P_k^ab - logdet P_k^a - logdet P_k^b - 3 log lambda_p ) ]
+                     - sum_shared ( logdet P_k^ab - logdet P_k^a - logdet P_k^b + 3 log lambda_p ) ]
     where S_ab = blockdiag(A_a, A_b) + [shared single-image Schur terms put back]
                  - sum_shared B_k^ab (P_k^ab)^-1 (B_k^ab)^T  (12x12),
     P_k^ab = lambda_p I + JpJp_k^a + JpJp_k^b, B_k^ab = [B_k^a; B_k^b].
@@ -368,7 +368,7 @@ def pairwise_mutual_information(infos: list, lambda_p: float, chunk_incidences: 
         P_inv = np.linalg.inv(P)
         B12 = np.concatenate([Ba, Bb], axis=1)                       # (M,12,3)
         joint = np.einsum("nij,njk,nlk->nil", B12, P_inv, B12)       # (M,12,12)
-        ld_term = batched_logdet(P) - ldP_all[ka] - ldP_all[kb] - log_lambda
+        ld_term = batched_logdet(P) - ldP_all[ka] - ldP_all[kb] + log_lambda   # + 3 log lambda_p per shared point
         sum_Ta = np.add.reduceat(Ta, seg, axis=0)
         sum_Tb = np.add.reduceat(Tb, seg, axis=0)
         sum_joint = np.add.reduceat(joint, seg, axis=0)
