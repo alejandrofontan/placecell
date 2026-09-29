@@ -8,10 +8,10 @@ and two consumers of that kernel: `unexplained_information`, the read-only inser
 through a callback. It runs on whichever host thread calls it: a single `mutex_` guards the
 store, every method takes its snapshot under the lock and does the linear algebra outside it, and
 the cull callback is invoked with the lock released. The event hooks (`on_add`, `on_query`, …)
-that feed the Recorder and the Logger live in `src/placecell_events.cpp`. The sources carry no
+that feed the Recorder and the Logger are on [`placecell_events.md`](placecell_events.md). The sources carry no
 `// #` section banners, so this page groups the functions by call-graph order.
 
-Sources: `src/placecell.cpp`, `src/placecell_events.cpp`, `include/placecell/placecell.h`;
+Sources: `src/placecell.cpp`, `include/placecell/placecell.h`;
 the culler has its own pages: the shell `cull_keyframes` on [`placecell_cull.md`](placecell_cull.md), the gram-greedy method on [`placecell_gram_greedy.md`](placecell_gram_greedy.md).
 Reading notes: [`docs/review/placecell.md`](../review/placecell.md). The contracts (idempotence,
 pointer stability, NaN semantics, thread-safety) are in the header comment and are not repeated
@@ -30,9 +30,9 @@ here; the culler's derivation is in the comment block at the top of its body.
 
 ## Call graph
 
-- **Filling the store** — [`add`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L81) → [`on_add`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L33); [`set_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L171 "PlaceCell::set_kernel(const Eigen::MatrixXf& similarity, const std::vector<ExternalId>& ids,") → [`on_set_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L51); [`set_items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L618 "PlaceCell::set_items(const ExternalId id, std::vector<ItemId> items, const ItemOptions") → [`on_set_items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L41); every kernel reader → [`materialise_kernel_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735) (item mode only); [`clear`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L363)
-- **Insertion query** — [`unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L421) (descriptor) and [`unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L775 "PlaceCell::unexplained_information(const std::vector<ItemId>& items,") (items) → [`compute_unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L435) / [`compute_unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L789 "PlaceCell::compute_unexplained_information(const std::vector<ItemId>& items,") → [`explainers_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L498), [`query_system_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L524), [`solve_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L588); then [`on_query`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L75)
-- **Culling** — [`cull_keyframes`](placecell_cull.md#cull_keyframes) ([source](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_cull.cpp#L141 "PlaceCell::CullReport PlaceCell::cull_keyframes(")) → [`materialise_kernel_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735), [`usable_rows`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L314), [`centre_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L287), the host callback, [`on_cull_call`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L99); flags the host drives: [`set_protected`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L391), [`set_culled`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L406)
+- **Filling the store** — [`add`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L81) → [`on_add`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L34); [`set_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L171 "PlaceCell::set_kernel(const Eigen::MatrixXf& similarity, const std::vector<ExternalId>& ids,") → [`on_set_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L52); [`set_items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L618 "PlaceCell::set_items(const ExternalId id, std::vector<ItemId> items, const ItemOptions") → [`on_set_items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L42); every kernel reader → [`materialise_kernel_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735) (item mode only); [`clear`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L363)
+- **Insertion query** — [`unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L421) (descriptor) and [`unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L775 "PlaceCell::unexplained_information(const std::vector<ItemId>& items,") (items) → [`compute_unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L435) / [`compute_unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L789 "PlaceCell::compute_unexplained_information(const std::vector<ItemId>& items,") → [`explainers_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L498), [`query_system_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L524), [`solve_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L588); then [`on_query`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L77)
+- **Culling** — [`cull_keyframes`](placecell_cull.md#cull_keyframes) ([source](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_cull.cpp#L141 "PlaceCell::CullReport PlaceCell::cull_keyframes(")) → [`materialise_kernel_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735), [`usable_rows`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L314), [`centre_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L287), the host callback, [`on_cull_call`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L101); flags the host drives: [`set_protected`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L391), [`set_culled`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L406)
 - **Kernel views** — [`kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L274); [`centred_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L358) → [`snapshot`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L339) → [`usable_rows`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L314), [`centre_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L287); [`external_ids`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L281); [`dump`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L55) → [`snapshot`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L339), [`centred_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L358)
 - Not in the graph (setup, accessors, diagnostics): [`PlaceCell`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L28 "PlaceCell::PlaceCell(const Options& options)"), [`~PlaceCell`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L42 "PlaceCell::~PlaceCell()") → [`print_profile`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L48); [`has`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L145), [`descriptor`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L151), [`kernel_only`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L160), [`internal_id`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L261), [`size`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L268), [`is_protected`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L399), [`is_culled`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L414), [`items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L720), [`item_mode`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L729)
 
@@ -121,7 +121,7 @@ PlaceCell::InternalId PlaceCell::add(const ExternalId id, Eigen::VectorXf descri
   store's writes NaN into its row and sets the store's `size_mismatch_` flag.
 - called from: `MegaLocPlaceCell::add_image` ([`megaloc_placecell.cpp`](https://github.com/alejandrofontan/placecell/blob/main/src/megaloc/megaloc_placecell.cpp#L41 "existing != invalid_id")),
   the synthetic demo, the Python binding.
-- events: [`on_add`](#on_add-on_set_kernel-on_set_items-on_query-on_cull_call) (WARN once on a size mismatch, DEBUG per add).
+- events: [`on_add`](placecell_events.md#on_add) (WARN once on a size mismatch, DEBUG per add).
 
 ### `set_kernel`
 
@@ -146,7 +146,7 @@ PlaceCell::KernelReport PlaceCell::set_kernel(const Eigen::MatrixXf& similarity,
 - stores the float kernel, rebuilds the row and total sums exactly as [`add`](#add) maintains
   them, and marks the store kernel-only.
 - called from: [`kernel_demo.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/kernel_demo.cpp#L214 "cell.cull_keyframes("), the synthetic demo's kernel-only twin, the Python binding (VSLAM-LAB's `rgb_placecell` selection).
-- events: [`on_set_kernel`](#on_add-on_set_kernel-on_set_items-on_query-on_cull_call) (INFO summary; WARN above `asymmetry_warn` and on negative eigenvalues without clipping).
+- events: [`on_set_kernel`](placecell_events.md#on_set_kernel) (INFO summary; WARN above `asymmetry_warn` and on negative eigenvalues without clipping).
 - parameters: `KernelOptions` — see [Parameters](#parameters-read-by-this-file).
 
 ### `set_items`
@@ -169,7 +169,7 @@ PlaceCell::InternalId PlaceCell::set_items(const ExternalId id, std::vector<Item
 - only marks the float kernel dirty; [`materialise_kernel_locked`](#materialise_kernel_locked)
   rebuilds it on the next read, so a burst of refreshes costs one rebuild.
 - called from: AllFeature-VSLAM's `KeyframeInformation` (covisibility kernel), the Python binding.
-- events: [`on_set_items`](#on_add-on_set_kernel-on_set_items-on_query-on_cull_call) (WARN once on an empty set, DEBUG with the +/− counts).
+- events: [`on_set_items`](placecell_events.md#on_set_items) (WARN once on an empty set, DEBUG with the +/− counts).
 
 ### `materialise_kernel_locked`
 
@@ -222,7 +222,7 @@ PlaceCell::Information PlaceCell::unexplained_information(const std::vector<Item
   item overload defaults it to false (the covisibility kernel has no common-mode floor) and times
   as `unexplained_information_items`. Both delegate to
   [`compute_unexplained_information`](#compute_unexplained_information) and end with
-  [`on_query`](#on_add-on_set_kernel-on_set_items-on_query-on_cull_call).
+  [`on_query`](placecell_events.md#on_query).
 - called from: AllFeature's `Tracking::need_new_keyframe` through `KeyframeInformation`,
   `MegaLocPlaceCell::unexplained_information` ([`megaloc_placecell.cpp`](https://github.com/alejandrofontan/placecell/blob/main/src/megaloc/megaloc_placecell.cpp#L57 "descriptor_out")),
   the synthetic demo, the Python bindings (`unexplained_information` / `unexplained_information_items`).
@@ -413,6 +413,8 @@ One line each; all take the lock, none touch the kernel.
 
 ## Diagnostics and events
 
+The `on_*` event hooks that feed the Recorder and the Logger are on [`placecell_events.md`](placecell_events.md).
+
 ### `PlaceCell`
 
 ```cpp
@@ -443,16 +445,6 @@ void PlaceCell::dump(const std::string& directory) const
   `directory`, creating it. INFO line with the counts. The offline twin of the viz module reads this
   (`tools/plot_placecell.py`).
 
-### `on_add`, `on_set_kernel`, `on_set_items`, `on_query`, `on_cull_call`
-
-Defined in [`placecell_events.cpp`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L33 "PlaceCell::on_add("). The maths calls each once per event; they fan out to the Recorder and the Logger, and nothing else in the file logs or records.
-
-- **[`on_add`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L33)** — WARN once on a descriptor-size mismatch, DEBUG per stored view.
-- **[`on_set_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L51)** — one INFO line with the report (views, ms, asymmetry, diagonal deviation, spectrum); WARN when the asymmetry exceeds `asymmetry_warn` and when negative eigenvalues were found without clipping (issue #3).
-- **[`on_set_items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L41)** — WARN once on an empty set, DEBUG with the item count and the +/− diff.
-- **[`on_query`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L75)** — records the query (unexplained, explainers, best explainer, centred, stored, window); WARN once when it returned NaN; TRACE per query.
-- **[`on_cull_call`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L99)** — records the call and each cull; DEBUG per cull and per call; INFO once per change of the over-budget history count (tau lowered below earlier culls, or back within tau).
-
 ## Parameters read by this file
 
 placecell has no settings file. Every tunable is a struct with member initialisers in
@@ -466,7 +458,7 @@ placecell has no settings file. Every tunable is a struct with member initialise
 | `Options` | `report_on_destruction` | false | `~PlaceCell` | print the profile table when the store dies |
 | `Options` | `name` | `"PlaceCell"` | [`PlaceCell`](#placecell) | label of the profile report |
 | `KernelOptions` | `symmetrise` | true | [`set_kernel`](#set_kernel) | store `(S + Sᵀ)/2` |
-| `KernelOptions` | `asymmetry_warn` | 0.05 | [`on_set_kernel`](#on_add-on_set_kernel-on_set_items-on_query-on_cull_call) | WARN when `max|S_ij − S_ji|` exceeds it |
+| `KernelOptions` | `asymmetry_warn` | 0.05 | [`on_set_kernel`](placecell_events.md#on_set_kernel) | WARN when `max|S_ij − S_ji|` exceeds it |
 | `KernelOptions` | `unit_diagonal` | true | [`set_kernel`](#set_kernel) | set the diagonal to exactly 1 |
 | `KernelOptions` | `psd_check` | true | [`set_kernel`](#set_kernel) | compute the spectrum (O(n³)); WARN when the smallest eigenvalue is negative |
 | `KernelOptions` | `clip_to_psd` | false | [`set_kernel`](#set_kernel) | clip negative eigenvalues at 0 and renormalise to unit diagonal |

@@ -147,7 +147,7 @@ It parses the method and the objective ([`parse_cull_method`](#parse_cull_method
 
 `parameters` is described field by field in the comments of `CullParameters` in `include/placecell/placecell.h`. `try_cull` receives the external id of each proposed view and returns true when the host removed it, false to keep it alive and out of the running for the rest of this call (e.g. a deferred erase). `local_window` is the list of external ids of the host's covisibility window, or `nullptr` for the whole map; ids not in the store are ignored.
 
-Returns a `CullReport`. The shell sets `views_total` (every row ever inserted, usable or not), `alive_after` on the early returns, and `candidates`; the method appends one `CulledView` per accepted cull to `culled` and fills `alive_after`, `worst_history`, `history_over_budget`, `reached_max_per_call`, `alive_ids` and `alive_unique_information` through [`gram_greedy::report`](placecell_gram_greedy.md#report). Every exit path, early or not, passes the report to [`on_cull_call`](placecell.md#on_add-on_set_kernel-on_set_items-on_query-on_cull_call) for the Recorder and the log.
+Returns a `CullReport`. The shell sets `views_total` (every row ever inserted, usable or not), `alive_after` on the early returns, and `candidates`; the method appends one `CulledView` per accepted cull to `culled` and fills `alive_after`, `worst_history`, `history_over_budget`, `reached_max_per_call`, `alive_ids` and `alive_unique_information` through [`gram_greedy::report`](placecell_gram_greedy.md#report). Every exit path, early or not, passes the report to [`on_cull_call`](placecell_events.md#on_cull_call) for the Recorder and the log.
 
 ```cpp
 placecell::PlaceCell::CullParameters params;
