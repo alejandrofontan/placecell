@@ -76,8 +76,10 @@ PlaceCell::InternalId PlaceCell::set_items(const ExternalId id, std::vector<Item
             return internal;
         }
 
+        // A refresh with the same set changes nothing; a NEW view must still go through the
+        // rest, even with an empty set (its row is NaN and the kernel must be rebuilt)
         std::vector<ItemId>& current = items_[internal];
-        if(current == items)
+        if(!inserted && current == items)
         {
             timer.cancel();
             return internal;
