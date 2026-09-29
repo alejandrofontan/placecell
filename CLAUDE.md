@@ -72,7 +72,7 @@ The count-driven cull path (`target_alive`) is only covered by VSLAM-LAB's `rgb_
 
 ## Architecture
 
-### Core: `PlaceCell` (`include/placecell/placecell.h`, `src/placecell.cpp`)
+### Core: `PlaceCell` (`include/placecell/placecell.h`, `src/placecell.cpp`; the item mode in `src/placecell_items.cpp`, the insertion query in `src/placecell_query.cpp`)
 
 An id-mapped, **append-only** store of views plus the similarity kernel over them. External ids are the host's (keyframe ids); each maps to a contiguous internal id = kernel row. Rows are never removed: a culled view keeps its row and becomes **history** (`set_culled`/`is_culled`); `set_protected` marks views the culler may use as explainers but never propose; `clear()` is the host-reset hook.
 

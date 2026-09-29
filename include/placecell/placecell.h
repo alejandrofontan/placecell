@@ -64,7 +64,9 @@
  * - items() returns a stable pointer to a view's sorted item set (frozen once culled),
  *   nullptr for an unknown id or another mode.
  * - clear() drops everything (store and kernel) — for a host system reset.
- * - Thread-safe: all methods serialise internally.
+ * - Thread-safe: all methods serialise internally, with two exceptions: clear() must
+ *   not run while a cull_keyframes call is in progress on another thread, and two
+ *   cull_keyframes calls must not run at the same time on one store.
  *
  * Diagnostics (see log.h / profiler.h / recorder.h): every store owns a Profiler (timing
  * of the main entry points) and a Recorder (query / cull / decision history for the
@@ -255,7 +257,9 @@ public:
     };
     Snapshot snapshot(bool centred = false) const;
 
-    // Drop every stored view and the kernel (host system reset).
+    // Drop every stored view and the kernel (host system reset); the next filling call
+    // decides the mode again. The Profiler and the Recorder are kept. Not while a
+    // cull_keyframes call is running on another thread (its culls are marked by row).
     void clear();
 
     // ---- Information of a view not in the store ----------------------------------
@@ -264,7 +268,9 @@ public:
     {
         // v_x = K_xx - k_xA K_AA^-1 k_Ax in [0,1]: 1 = nothing alive resembles the view,
         // 0 = the alive views explain it completely. NaN when the query cannot be
-        // compared (descriptor-size mismatch with the store).
+        // compared: a descriptor query on a kernel-only or item-backed store, on a store
+        // that ever received a descriptor of another size, or with a descriptor of the
+        // wrong size; an item query on a store that is not item-backed, or an empty one.
         float unexplained{1.0f};
         // Alive views the query was marginalised over (0 -> unexplained is 1)
         int explainers{0};

@@ -1,6 +1,6 @@
 # Review — PlaceCell
 
-- **Sources:** `src/placecell.cpp`, `src/placecell_events.cpp`, `src/placecell_cull.cpp`, `include/placecell/placecell.h`
+- **Sources:** `src/placecell.cpp`, `src/placecell_items.cpp`, `src/placecell_query.cpp`, `src/placecell_events.cpp`, `src/placecell_cull.cpp`, `include/placecell/placecell.h`
 - **Reviewer:** Alejandro Fontan
 - **Last reviewed at:** `ccc5c8c` (2026-09-25) — 3 of 41 functions read
 
@@ -8,9 +8,9 @@
 
 | Function | Source | State | Notes |
 |---|---|---|---|
-| `PlaceCell::centre_kernel` | [placecell.cpp#L287](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L287 "PlaceCell::centre_kernel(") | question | m vs n threshold, silent floor, see 2026-09-25 |
-| `PlaceCell::usable_rows` | [placecell.cpp#L314](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L314 "PlaceCell::usable_rows(") | ok | second pass defensive, see 2026-09-25 |
-| `PlaceCell::materialise_kernel_locked` | [placecell.cpp#L735](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735 "PlaceCell::materialise_kernel_locked(") | question | incremental rebuild, see 2026-09-25  |
+| `PlaceCell::centre_kernel` | [placecell.cpp#L293](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L293 "PlaceCell::centre_kernel(") | question | m vs n threshold, silent floor, see 2026-09-25 |
+| `PlaceCell::usable_rows` | [placecell.cpp#L320](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L320 "PlaceCell::usable_rows(") | ok | second pass defensive, see 2026-09-25 |
+| `PlaceCell::materialise_kernel_locked` | [placecell_items.cpp#L149](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_items.cpp#L149 "PlaceCell::materialise_kernel_locked(") | question | incremental rebuild, see 2026-09-25  |
 
 ## Notes
 

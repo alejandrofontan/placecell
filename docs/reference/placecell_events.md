@@ -82,7 +82,7 @@ void PlaceCell::on_set_items(const ExternalId id, const InternalId internal, con
                              const std::size_t added, const std::size_t removed, const bool new_view) const
 ```
 
-Reports an item set stored or refreshed by [`set_items`](placecell.md#set_items). An empty set warns once: the view's kernel row is NaN (0/0), and `cull_keyframes` and the queries ignore it until it gets items again. Every call is a DEBUG line with the row, the item count and the diff against the previous set.
+Reports an item set stored or refreshed by [`set_items`](placecell_items.md#set_items). An empty set warns once: the view's kernel row is NaN (0/0), and `cull_keyframes` and the queries ignore it until it gets items again. Every call is a DEBUG line with the row, the item count and the diff against the previous set.
 
 `items` is the size of the new set, `added` / `removed` the diff against the previous one, and `new_view` whether this created the view (true) or refreshed it (false).
 
@@ -112,7 +112,7 @@ void PlaceCell::on_query(const Information& information, const int stored, const
                          const bool centred, const double ms) const
 ```
 
-Reports one insertion query, from either [`unexplained_information`](placecell.md#unexplained_information) overload (descriptor or items). It records a `Recorder::Query` (the unexplained information, the number of explainers, the best explainer and its similarity, whether the kernel was centred, the store size and the window size), warns once when the query returned NaN (a store / query mismatch, or an empty item query), and writes a TRACE line.
+Reports one insertion query, from either [`unexplained_information`](placecell_query.md#unexplained_information) overload (descriptor or items). It records a `Recorder::Query` (the unexplained information, the number of explainers, the best explainer and its similarity, whether the kernel was centred, the store size and the window size), warns once when the query returned NaN (a store / query mismatch, or an empty item query), and writes a TRACE line.
 
 `information` is the query's result, `stored` the number of stored views, `window_size` the size of the host's window or −1 without one, `centred` whether the query was centred, `ms` its duration.
 
