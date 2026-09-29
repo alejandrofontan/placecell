@@ -11,8 +11,8 @@ the cull callback is invoked with the lock released. The event hooks (`on_add`, 
 that feed the Recorder and the Logger live in `src/placecell_events.cpp`. The sources carry no
 `// #` section banners, so this page groups the functions by call-graph order.
 
-Sources: `src/placecell.cpp`, `src/placecell_events.cpp`, `src/placecell_cull.cpp`, `include/placecell/placecell.h`;
-the gram-greedy method has its own page, [`placecell_gram_greedy.md`](placecell_gram_greedy.md).
+Sources: `src/placecell.cpp`, `src/placecell_events.cpp`, `include/placecell/placecell.h`;
+the culler has its own pages: the shell `cull_keyframes` on [`placecell_cull.md`](placecell_cull.md), the gram-greedy method on [`placecell_gram_greedy.md`](placecell_gram_greedy.md).
 Reading notes: [`docs/review/placecell.md`](../review/placecell.md). The contracts (idempotence,
 pointer stability, NaN semantics, thread-safety) are in the header comment and are not repeated
 here; the culler's derivation is in the comment block at the top of its body.
@@ -32,29 +32,56 @@ here; the culler's derivation is in the comment block at the top of its body.
 
 - **Filling the store** — [`add`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L81) → [`on_add`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L33); [`set_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L171 "PlaceCell::set_kernel(const Eigen::MatrixXf& similarity, const std::vector<ExternalId>& ids,") → [`on_set_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L51); [`set_items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L618 "PlaceCell::set_items(const ExternalId id, std::vector<ItemId> items, const ItemOptions") → [`on_set_items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L41); every kernel reader → [`materialise_kernel_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735) (item mode only); [`clear`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L363)
 - **Insertion query** — [`unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L421) (descriptor) and [`unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L775 "PlaceCell::unexplained_information(const std::vector<ItemId>& items,") (items) → [`compute_unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L435) / [`compute_unexplained_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L789 "PlaceCell::compute_unexplained_information(const std::vector<ItemId>& items,") → [`explainers_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L498), [`query_system_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L524), [`solve_information`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L588); then [`on_query`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L75)
-- **Culling** — [`cull_keyframes`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L39) → [`materialise_kernel_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735), [`usable_rows`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L314), [`centre_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L287), the host callback, [`on_cull_call`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L99); flags the host drives: [`set_protected`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L391), [`set_culled`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L406)
+- **Culling** — [`cull_keyframes`](placecell_cull.md#cull_keyframes) ([source](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_cull.cpp#L141 "PlaceCell::CullReport PlaceCell::cull_keyframes(")) → [`materialise_kernel_locked`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L735), [`usable_rows`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L314), [`centre_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L287), the host callback, [`on_cull_call`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_events.cpp#L99); flags the host drives: [`set_protected`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L391), [`set_culled`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L406)
 - **Kernel views** — [`kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L274); [`centred_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L358) → [`snapshot`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L339) → [`usable_rows`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L314), [`centre_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L287); [`external_ids`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L281); [`dump`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L55) → [`snapshot`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L339), [`centred_kernel`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L358)
 - Not in the graph (setup, accessors, diagnostics): [`PlaceCell`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L28 "PlaceCell::PlaceCell(const Options& options)"), [`~PlaceCell`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L42 "PlaceCell::~PlaceCell()") → [`print_profile`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L48); [`has`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L145), [`descriptor`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L151), [`kernel_only`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L160), [`internal_id`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L261), [`size`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L268), [`is_protected`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L399), [`is_culled`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L414), [`items`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L720), [`item_mode`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell.cpp#L729)
 
 ## Flow
 
 ```mermaid
+---
+config:
+  htmlLabels: false
+  themeCSS: "
+    text, tspan { font-family: var(--md-text-font-family), sans-serif; }
+    .edgePath .path, .flowchart-link { stroke: var(--md-mermaid-edge-color); }
+    .marker, marker path { fill: var(--md-mermaid-edge-color); stroke: var(--md-mermaid-edge-color); }
+    .edgeLabel rect, .labelBkg { fill: var(--md-default-bg-color); opacity: 1; }
+    .edgeLabel text, .edgeLabel tspan { fill: var(--md-default-fg-color); }"
+  flowchart:
+    htmlLabels: false
+    curve: basis
+    padding: 14
+---
 flowchart TD
-    HOST([host: SLAM keyframes · offline tool · bindings]) --> ADD["<b>add</b><br/>descriptor → one kernel row + row sums"]
-    HOST --> SK["<b>set_kernel</b><br/>host n×n similarity into an EMPTY store<br/>· symmetrise · unit diagonal · PSD check / clip"]
-    HOST --> SI["<b>set_items</b><br/>item set → inverted index → shared counts<br/>(mutable, frozen once culled)"]
-    ADD --> K[("kernel_ · row / total sums<br/>culled_ · protected_")]
+    HOST([host: SLAM keyframes · offline tool · bindings]) --> ADD("`**add**
+    descriptor → one kernel row + row sums`")
+    HOST --> SK("`**set_kernel**
+    host n×n similarity into an EMPTY store
+    symmetrise · unit diagonal · PSD check / clip`")
+    HOST --> SI("`**set_items**
+    item set → inverted index → shared counts
+    mutable, frozen once culled`")
+    ADD --> K[("`kernel_ · row / total sums
+    culled_ · protected_`")]
     SK --> K
-    SI --> MAT["<b>materialise_kernel_locked</b><br/>counts → cosine kernel, lazily"] --> K
-    HOST -- "frame before insertion" --> UI["<b>unexplained_information</b><br/>v_x = k_xx − k_xA K_AA⁻¹ k_Ax"]
+    SI --> MAT("`**materialise_kernel_locked**
+    counts → cosine kernel, lazily`") --> K
+    HOST -- "frame before insertion" --> UI("`**unexplained_information**
+    v_x = k_xx − k_xA K_AA⁻¹ k_Ax`")
     K --> UI
-    UI --> SYS["<b>query_system_locked</b><br/>· explainers_locked (alive ∩ window)<br/>· raw, or centred out of sample"] --> SOL["<b>solve_information</b><br/>jitter 1e-6 + LDLT"]
-    HOST -- "after local BA" --> CK["<b>cull_keyframes</b><br/>· snapshot → usable_rows → centre_kernel<br/>· M = K_AA⁻¹ · W = K_HA M<br/>· greedy: smallest v_i whose history price fits tau"]
+    UI --> SYS("`**query_system_locked**
+    explainers_locked (alive ∩ window)
+    raw, or centred out of sample`") --> SOL("`**solve_information**
+    jitter 1e-6 + LDLT`")
+    HOST -- "after local BA" --> CK("`**cull_keyframes**
+    snapshot → usable_rows → centre_kernel
+    alive / history in scope · candidates`")
     K --> CK
-    CK -- "try_cull(id), lock released" --> CB{host erased it?}
-    CB -- yes --> DOWN["rank-one downdate of M and W<br/>view → history row"] --> CK
-    CB -- no --> SKIP["candidate dropped for this call"] --> CK
-    CK --> REP([CullReport · Recorder · Logger])
+    CK --> GG("`**gram_greedy::cull**
+    the feasible candidate with the
+    smallest objective, one at a time`")
+    GG --> REP([CullReport · Recorder · Logger])
 
     click ADD "#add"
     click SK "#set_kernel"
@@ -63,20 +90,19 @@ flowchart TD
     click UI "#unexplained_information"
     click SYS "#query_system_locked"
     click SOL "#solve_information"
-    click CK "#cull_keyframes"
+    click CK "../placecell_cull/#cull_keyframes"
+    click GG "../placecell_gram_greedy/#cull"
 
     %% VSLAM-LAB logo squares: cyan #b5f3f9, periwinkle #8195fb, lavender #a59ddf
-    classDef entry fill:#8195fb,stroke:#5f74d6,color:#fff
-    classDef step fill:#b5f3f9,stroke:#7fcfd8,color:#1b2a4a
-    classDef check fill:#a59ddf,stroke:#7e75c4,color:#1b2a4a
-    classDef cmd fill:#fff,stroke:#8195fb,color:#1b2a4a
-    classDef store fill:#fff,stroke:#a59ddf,color:#1b2a4a
+    classDef entry fill:#8195fb,stroke:#5f74d6,stroke-width:2px,color:#fff
+    classDef step fill:#b5f3f9,stroke:#7fcfd8,stroke-width:2px,color:#1b2a4a
+    classDef check fill:#a59ddf,stroke:#7e75c4,stroke-width:2px,color:#1b2a4a
+    classDef store fill:#fff,stroke:#a59ddf,stroke-width:2px,color:#1b2a4a
 
     class HOST,REP entry
-    class ADD,SK,SI,MAT,UI,SYS,SOL,CK step
-    class CB check
-    class DOWN,SKIP cmd
+    class ADD,SK,SI,MAT,UI,SYS,SOL,CK,GG step
     class K store
+    linkStyle default stroke-width:2px
 ```
 
 ## Filling the store
@@ -162,7 +188,7 @@ rebuild at the first read.
 - **Writes**: `kernel_`, `kernel_row_sums_`, `kernel_total_sum_`, `kernel_dirty_` (all mutable)
 - **Lock**: `mutex_` held by the caller
 - **Cost**: time O(n²), space O(n²)
-- **Called from**: [`kernel`](#kernel), [`snapshot`](#snapshot), [`cull_keyframes`](#cull_keyframes),
+- **Called from**: [`kernel`](#kernel), [`snapshot`](#snapshot), [`cull_keyframes`](placecell_cull.md#cull_keyframes),
   the item [`compute_unexplained_information`](#compute_unexplained_information)
 
 ### `clear`
@@ -263,66 +289,7 @@ PlaceCell::Information PlaceCell::solve_information(Eigen::MatrixXd& K_AA, const
 
 ## Culling
 
-### `cull_keyframes`
-
-```cpp
-PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters,
-                                                const CullCallback& try_cull,
-                                                const std::vector<ExternalId>* local_window)
-```
-- culls, one at a time, among the alive candidates that keep every view ever inserted (each
-  history row and the candidate itself) at or below `tau = max_unexplained`, the one that
-  minimises `parameters.objective` — by default its unique information `v_i = 1/(K_AA⁻¹)_ii`. The host performs each removal through `try_cull`; the view
-  becomes history here only when the callback returns true. Returns a `CullReport` with the culled
-  views, the counts and the unique information of every alive view left in scope. Only the
-  `"gram-greedy"` method exists; any other name throws `std::invalid_argument`.
-- hand-off to the method: the shell fills a `CullScope` and builds a `CullExecutor` around
-  `try_cull`, both from the internal header `src/placecell_cull_method.h`, with a mark-culled
-  lambda that sets `culled_[row]` under `mutex_`, so the method never sees the store; the switch
-  on `CullMethod` then calls `gram_greedy::cull(scope, execute, report, profiler_)`
-  ([`placecell_gram_greedy.md`](placecell_gram_greedy.md#cull)). The bullets below summarise that
-  method; its page is the description.
-- stages, each a profiler sub-row: `snapshot+centring` (kernel, ids and flags copied under the
-  lock after [`materialise_kernel_locked`](#materialise_kernel_locked); [`usable_rows`](#usable_rows)
-  drops NaN rows with a WARN once; [`centre_kernel`](#centre_kernel) when `parameters.centred`),
-  `inverse` (`M = K_AA⁻¹` by LDLT on the alive block, in double), `greedy` (the loop),
-  `host_callback` (the callback's time, subtracted from the parent timer).
-- scope: alive = stored and not culled; candidates = alive views that are not protected. With
-  `local_window`, the alive set is reduced to the window and the history to the rows whose best
-  alive explainer over the whole map lies in the window. `protect_first` protects row 0,
-  `protect_last` the last n rows in insertion order, `set_protected` any view; protected views
-  still act as explainers.
-- feasibility of a candidate: `v_i ≤ tau`, and for every history row the price `W_hi² / M_ii` of
-  removing it must not exceed `tau − v_h`, or `0.01` for a row already above tau (tau was lowered
-  between calls), which may deteriorate by at most that slack. The feasible candidate with the
-  smallest objective score is proposed; none feasible ends the loop.
-- after an accepted cull: rank-one downdate `M' = M − m mᵀ / M_ii`, every history row
-  `W_h' = W_h − (W_hi / M_ii) m` and `v_h += W_hi² / M_ii`, the row and column of the culled view
-  zeroed in `M`, and the culled view joins the history with `v = v_i` (Schur identity).
-  A refused cull leaves `M` and `W` untouched and drops the view from the candidates for the rest
-  of the call (DEBUG).
-- count-driven mode: `parameters.target_alive > 0` sets `tau = +inf` (no `v_i` bound, so the
-  price test never fails either) and the loop stops at `max(min_keyframes, target_alive)` alive
-  views in scope; `max_per_call` caps the culls of one call in both modes.
-- early returns with an empty report: fewer than 3 views, alive count already at the stop, or no
-  candidate. A WARN once fires when the centring set equals the alive set (no history, map scope,
-  centred): `K_AA` is then rank-deficient and the scores of that call are jitter-scale (issue #5).
-- the report: the shell sets `views_total`, `candidates` and the early-return `alive_after`; the
-  method fills `culled` and, through [`gram_greedy::report`](placecell_gram_greedy.md#report),
-  `alive_after`, `worst_history`, `history_over_budget` (rows above tau), `reached_max_per_call`
-  and the `1/M_ii` of every alive view in scope (NaN where `M_ii ≤ 0`) as
-  `alive_unique_information`. Every exit path then calls
-  [`on_cull_call`](#on_add-on_set_kernel-on_set_items-on_query-on_cull_call) (`ReportOnExit` destructor).
-- called from: AllFeature-VSLAM's `LocalMapping::cull_keyframes_information`
-  ([`LocalMapping.cc#L651`](https://github.com/alejandrofontan/AllFeature-VSLAM/blob/main/src/LocalMapping.cc#L651)),
-  the offline selection in [`kernel_demo.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/kernel_demo.cpp#L214 "cell.cull_keyframes(")
-  and [`synthetic_demo.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/synthetic_demo.cpp#L135 "cell.cull_keyframes("),
-  [`megaloc_embedder_smoke.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/megaloc_embedder_smoke.cpp#L110 "store.cull_keyframes("),
-  the Python binding ([`bindings.cpp`](https://github.com/alejandrofontan/placecell/blob/main/python/bindings.cpp#L236 "self.cull_keyframes(")).
-- parameters: `CullParameters` — see [Parameters](#parameters-read-by-this-file). The centring
-  rationale, the scope and count-driven mode are in the comment block at the top of the function
-  body; the handling of a tau changed between calls and the downdate are on
-  [`placecell_gram_greedy.md`](placecell_gram_greedy.md); read both before changing the loop.
+`cull_keyframes` itself, its parameters and the types it hands the method are on [`placecell_cull.md`](placecell_cull.md); this page keeps the flags the host drives.
 
 ### `set_protected`
 
@@ -378,7 +345,7 @@ are left exactly as they were.
 - **Writes**: none (its first argument, in place)
 - **Lock**: none; the caller passes a snapshot it already owns
 - **Cost**: time O(m²), space O(m²) for the double copy
-- **Called from**: [`cull_keyframes`](#cull_keyframes) when `parameters.centred` is set, on the
+- **Called from**: [`cull_keyframes`](placecell_cull.md#cull_keyframes) when `parameters.centred` is set, on the
   copied kernel after [`usable_rows`](#usable_rows); [`snapshot`](#snapshot) when `centred` is
   requested, hence [`centred_kernel`](#centred_kernel), [`dump`](#dump) and the viz module, whose
   centred kernel therefore carries raw values in any unusable row
@@ -405,7 +372,7 @@ any survivor still NaN against another survivor.
 - **Writes**: none
 - **Lock**: none; the caller passes a snapshot it already owns
 - **Cost**: time O(n²), space O(n) for the result
-- **Called from**: [`cull_keyframes`](#cull_keyframes) on the copied kernel, before
+- **Called from**: [`cull_keyframes`](placecell_cull.md#cull_keyframes) on the copied kernel, before
   [`centre_kernel`](#centre_kernel); [`snapshot`](#snapshot) when `centred` is requested, so the
   culler and the centred snapshot agree on the usable set. The item query does not call it: it
   drops empty views by `item_norms_ == 0`, which coincides with this rule in item mode
@@ -490,7 +457,7 @@ Defined in [`placecell_events.cpp`](https://github.com/alejandrofontan/placecell
 
 placecell has no settings file. Every tunable is a struct with member initialisers in
 `include/placecell/placecell.h`; the host maps its own keys onto them (AllFeature-VSLAM's
-`PlaceCell.*` and `LocalMapping.*` blocks).
+`PlaceCell.*` and `LocalMapping.*` blocks). `CullParameters` (read by [`cull_keyframes`](placecell_cull.md#cull_keyframes)) is documented by its field comments in the header.
 
 | Struct | Field | Default | Used in | Effect |
 |---|---|---|---|---|
@@ -504,12 +471,3 @@ placecell has no settings file. Every tunable is a struct with member initialise
 | `KernelOptions` | `psd_check` | true | [`set_kernel`](#set_kernel) | compute the spectrum (O(n³)); WARN when the smallest eigenvalue is negative |
 | `KernelOptions` | `clip_to_psd` | false | [`set_kernel`](#set_kernel) | clip negative eigenvalues at 0 and renormalise to unit diagonal |
 | `ItemOptions` | `normalization` | `cosine` | [`set_items`](#set_items) | accepted, ignored: cosine is the only normalisation |
-| `CullParameters` | `method` | `"gram-greedy"` | [`cull_keyframes`](#cull_keyframes) | the only method; anything else throws |
-| `CullParameters` | `objective` | `"unique"` | `gram_greedy::propose` ([`placecell_gram_greedy.md`](placecell_gram_greedy.md#propose)) | ranking of the feasible candidates: `unique`, `minimax` or `total-loss` |
-| `CullParameters` | `max_unexplained` | 0.1 | [`cull_keyframes`](#cull_keyframes) | tau: the most any alive or history view may be left unexplained |
-| `CullParameters` | `centred` | true | [`cull_keyframes`](#cull_keyframes) | marginalise on the double-centred kernel |
-| `CullParameters` | `min_keyframes` | 10 | [`cull_keyframes`](#cull_keyframes) | never cull below this many alive views in scope |
-| `CullParameters` | `protect_last` | 1 | [`cull_keyframes`](#cull_keyframes) | the last n inserted rows are never candidates |
-| `CullParameters` | `max_per_call` | 0 | [`cull_keyframes`](#cull_keyframes) | cap on culls per call (0 = unlimited) |
-| `CullParameters` | `protect_first` | true | [`cull_keyframes`](#cull_keyframes) | row 0 is never a candidate |
-| `CullParameters` | `target_alive` | 0 | [`cull_keyframes`](#cull_keyframes) | > 0: count-driven mode, tau ignored, stop at this many alive views |

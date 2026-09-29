@@ -6,10 +6,10 @@
   max-width: 90rem;
 }
 
-/* Justified body text (paragraphs, list items and the text inside boxes); hyphenation
-   keeps justified lines from opening wide gaps. Tables, code and headings stay as they are. */
-.md-typeset p,
-.md-typeset li {
+/* Justified paragraphs (including the text inside boxes); hyphenation keeps justified lines
+   from opening wide gaps. Tight list items are left ragged: they are mostly code spans, which
+   cannot hyphenate. Tables, code and headings stay as they are. */
+.md-typeset p {
   text-align: justify;
   hyphens: auto;
 }

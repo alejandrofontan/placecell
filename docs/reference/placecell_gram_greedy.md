@@ -1,6 +1,6 @@
 # Gram-greedy culling
 
-The culling method behind `cull_keyframes` (`src/placecell_gram_greedy.{h,cpp}`): it removes alive views one at a time, by default the one the others explain best, as long as no view ever inserted is left with more than tau of unexplained information.
+The culling method behind [`cull_keyframes`](placecell_cull.md#cull_keyframes) (`src/placecell_gram_greedy.{h,cpp}`): it removes alive views one at a time, by default the one the others explain best, as long as no view ever inserted is left with more than tau of unexplained information.
 
 ```mermaid
 ---
