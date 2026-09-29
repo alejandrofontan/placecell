@@ -423,94 +423,9 @@ private:
     // cull_keyframes is a method-agnostic shell around one culling method
     // (src/placecell_cull.cpp): it validates, profiles, snapshots the kernel, fixes the
     // scope and the candidates, and reports; the method decides the order of the culls.
-    enum class CullMethod { gram_greedy };
-    // CullParameters::method -> CullMethod; throws std::invalid_argument on an unknown name
-    static CullMethod parse_cull_method(const std::string& name);
-    enum class CullObjective { unique, minimax, total_loss };
-    // CullParameters::objective -> CullObjective; throws std::invalid_argument on an unknown name
-    static CullObjective parse_cull_objective(const std::string& name);
-    // What the shell hands a method. Indices are kernel rows of `similarity` (raw or
-    // centred, taken under the lock); alive/history are the usable rows in scope;
-    // candidate[a] says whether alive[a] may be proposed (not protected).
-    struct CullScope
-    {
-        Eigen::MatrixXf similarity;
-        std::vector<ExternalId> row_ids;
-        std::vector<int> alive;
-        std::vector<int> history;
-        std::vector<char> candidate;
-        double tau{0.0};          // +inf in count-driven mode
-        int stop_at{0};           // stop once this many alive views remain in scope
-        int max_per_call{0};      // 0 = unlimited
-        bool centred{false};
-        bool local{false};
-        CullObjective objective{CullObjective::unique};
-    };
-    // Executes a cull for a method: proposes a kernel row to the host with mutex_
-    // RELEASED (the host typically takes its own map mutex in the callback), marks the row
-    // culled on acceptance and accumulates the callback time, which the shell subtracts
-    // from the call's own timing. Defined here because every method file uses it.
-    class CullExecutor
-    {
-    public:
-        CullExecutor(PlaceCell& cell, const CullCallback& try_cull, const std::vector<ExternalId>& row_ids)
-            : cell_(cell), try_cull_(try_cull), row_ids_(row_ids) {}
+    // The scope, the executor and the methods are internal (src/placecell_cull_method.h,
+    // src/placecell_gram_greedy.h).
 
-        // The host's answer; true = the view is gone on the host side and is history here.
-        bool operator()(const int row)
-        {
-            const Profiler::Stopwatch watch;
-            const bool culled_by_host = try_cull_(row_ids_[row]);
-            ms_ += watch.ms();
-            if(culled_by_host)
-            {
-                std::lock_guard<std::mutex> lock(cell_.mutex_);
-                cell_.culled_[row] = 1;
-                count_++;
-            }
-            return culled_by_host;
-        }
-        double ms() const { return ms_; }
-        int count() const { return count_; }
-
-    private:
-        PlaceCell& cell_;
-        const CullCallback& try_cull_;
-        const std::vector<ExternalId>& row_ids_;
-        double ms_{0.0};
-        int count_{0};
-    };
-    // The joint-information greedy rule on the Gram kernel; fills report.culled, the rest
-    // of the report through gram_greedy_report. Driver of the four steps below.
-    void cull_gram_greedy(const CullScope& scope, CullExecutor& execute, CullReport& report);
-    // Linear-algebra state of one gram-greedy call, indexed like scope.alive
-    struct GramGreedyState
-    {
-        Eigen::MatrixXd M;                     // K_AA^-1 (jittered); zero row/column once removed
-        std::vector<Eigen::VectorXd> W_rows;   // K_HA M, one row per history view (seeded, then one per cull)
-        std::vector<double> v_h;               // unexplained information of each history row
-        std::vector<char> removed;             // culled in this call
-    };
-    struct GramGreedyProposal
-    {
-        int index;                    // position in scope.alive, -1 = no feasible candidate
-        double unique_information;    // v_i = 1/M_ii
-        double worst_after;           // max unexplained view right after the cull
-        double score;                 // the value of scope.objective that won (v_i, worst_after or the total loss)
-    };
-    static constexpr double gram_greedy_jitter = 1e-6;              // K_AA diagonal (same as the query's)
-    static constexpr double gram_greedy_over_budget_slack = 0.01;   // max deterioration of a history row already above tau
-    // The O(|A|^3) step: M = K_AA^-1, then W and v_h for the history in scope
-    static GramGreedyState gram_greedy_seed(const CullScope& scope);
-    // The greedy rule: the feasible candidate with the smallest scope.objective (index -1 when none)
-    static GramGreedyProposal gram_greedy_propose(const CullScope& scope, const GramGreedyState& state,
-                                                  const std::vector<char>& candidate);
-    // After an accepted cull: rank-one downdate of M and W, v_h prices, the view joins the history
-    static void gram_greedy_downdate(const CullScope& scope, GramGreedyState& state,
-                                     const GramGreedyProposal& proposal);
-    // After the loop: alive_after, worst_history, history_over_budget, reached_max_per_call,
-    // alive_ids and alive_unique_information from the final state (counts from report.culled)
-    static void gram_greedy_report(const CullScope& scope, const GramGreedyState& state, CullReport& report);
     // Double-centre `kernel` over the rows flagged usable and renormalise to unit
     // diagonal (no-op below 3 usable rows)
     static void centre_kernel(Eigen::MatrixXf& kernel, const std::vector<char>& usable);

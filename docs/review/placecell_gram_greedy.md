@@ -1,6 +1,6 @@
 # Review — gram-greedy
 
-- **Sources:** `src/placecell_gram_greedy.cpp` (declarations, `GramGreedyState`, `GramGreedyProposal`, `CullExecutor` and the two constants in the private section of `include/placecell/placecell.h`)
+- **Sources:** `src/placecell_gram_greedy.cpp`, `src/placecell_gram_greedy.h` (`namespace placecell::gram_greedy`: `State`, `Proposal`, the two constants, the declarations), `src/placecell_cull_method.h` (`CullScope`, `CullExecutor`, shared by every method)
 - **Reviewer:** Alejandro Fontan
 - **Last reviewed at:** `74acd51` (2026-09-26) — 1 of 4 functions read; the file is the culler split out of `src/placecell.cpp`
 
@@ -8,12 +8,13 @@
 
 | Function | Source | State | Notes |
 |---|---|---|---|
-| `PlaceCell::cull_gram_greedy` | [placecell_gram_greedy.cpp#L119](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L119 "PlaceCell::cull_gram_greedy(") | unread |  |
-| `PlaceCell::gram_greedy_seed` | [placecell_gram_greedy.cpp#L23](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L23 "PlaceCell::gram_greedy_seed(") | question | unchecked LDLT (#3), jitter gap, see 2026-09-26 |
-| `PlaceCell::gram_greedy_propose` | [placecell_gram_greedy.cpp#L49](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L49 "PlaceCell::gram_greedy_propose(") | unread |  |
-| `PlaceCell::gram_greedy_downdate` | [placecell_gram_greedy.cpp#L90](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L90 "PlaceCell::gram_greedy_downdate(") | unread |  |
+| `gram_greedy::cull` | [placecell_gram_greedy.cpp#L145](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L145 "void cull(const CullScope& scope") | unread |  |
+| `gram_greedy::seed` | [placecell_gram_greedy.cpp#L23](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L23 "State seed(const CullScope& scope)") | question | unchecked LDLT (#3), jitter gap, see 2026-09-26 |
+| `gram_greedy::propose` | [placecell_gram_greedy.cpp#L49](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L49 "Proposal propose(const CullScope& scope") | unread |  |
+| `gram_greedy::downdate` | [placecell_gram_greedy.cpp#L95](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L95 "void downdate(const CullScope& scope") | unread |  |
+| `gram_greedy::report` | [placecell_gram_greedy.cpp#L118](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L118 "void report(const CullScope& scope") | unread |  |
 
-`CullExecutor::operator()` (header-only, nested class) is not listed by the checklist tool; note it under the driver if it matters.
+`CullExecutor::operator()` (header-only, `src/placecell_cull_method.h`) is not listed; note it under the driver if it matters. The functions were renamed on 2026-09-29 (`PlaceCell::gram_greedy_<step>` → `gram_greedy::<step>`, `cull_gram_greedy` → `gram_greedy::cull`); the dated notes below keep the old names. `report` is new (split out of the driver).
 
 ## Notes
 

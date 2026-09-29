@@ -8,12 +8,15 @@
  *
  * The culler's shell. PlaceCell::cull_keyframes is method-agnostic (validation,
  * profiling, the kernel snapshot, the scope and the candidates, the report); it hands
- * a CullScope and a CullExecutor to one culling method selected by
- * CullParameters::method. The methods live one per file (placecell_gram_greedy.cpp is
- * the only one); the snapshot, usable-row, centring and event helpers stay in
- * placecell.cpp and placecell_events.cpp.
+ * a CullScope and a CullExecutor (placecell_cull_method.h) to one culling method
+ * selected by CullParameters::method. The methods live one per internal header + file
+ * (placecell_gram_greedy.h/.cpp is the only one); the snapshot, usable-row, centring and
+ * event helpers stay in placecell.cpp and placecell_events.cpp.
  */
 #include "placecell/placecell.h"
+
+#include "placecell_cull_method.h"
+#include "placecell_gram_greedy.h"
 
 #include <algorithm>
 #include <limits>
@@ -27,7 +30,7 @@ namespace placecell
 
 // ---- Method selection ---------------------------------------------------------------
 
-PlaceCell::CullMethod PlaceCell::parse_cull_method(const std::string& name)
+CullMethod parse_cull_method(const std::string& name)
 {
     if(name == "gram-greedy")
         return CullMethod::gram_greedy;
@@ -36,7 +39,7 @@ PlaceCell::CullMethod PlaceCell::parse_cull_method(const std::string& name)
                                 + name + "' (options: gram-greedy)");
 }
 
-PlaceCell::CullObjective PlaceCell::parse_cull_objective(const std::string& name)
+CullObjective parse_cull_objective(const std::string& name)
 {
     if(name == "unique")
         return CullObjective::unique;
@@ -185,11 +188,14 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
     scope.local = local;
     scope.objective = objective;
 
-    CullExecutor execute(*this, try_cull, scope.row_ids);
+    CullExecutor execute(try_cull, scope.row_ids, [this](const int row){
+        std::lock_guard<std::mutex> lock(mutex_);
+        culled_[row] = 1;
+    });
     switch(method)
     {
         case CullMethod::gram_greedy:
-            cull_gram_greedy(scope, execute, report);
+            gram_greedy::cull(scope, execute, report, profiler_);
             break;
     }
 

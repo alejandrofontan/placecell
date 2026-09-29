@@ -6,31 +6,31 @@
  * Created: 2026-09-26
  * License: Apache-2.0
  *
- * The gram-greedy culling method: gram_greedy_seed / gram_greedy_propose /
- * gram_greedy_downdate / gram_greedy_report and their driver cull_gram_greedy, called by the shell in
- * placecell_cull.cpp through CullParameters::method = "gram-greedy".
+ * The gram-greedy culling method (placecell_gram_greedy.h): seed / propose / downdate /
+ * report and their driver cull, called by the shell in placecell_cull.cpp through
+ * CullParameters::method = "gram-greedy".
  */
-#include "placecell/placecell.h"
+#include "placecell_gram_greedy.h"
 
 #include <algorithm>
 #include <limits>
 
 #include <Eigen/Dense>
 
-namespace placecell
+namespace placecell::gram_greedy
 {
 
-PlaceCell::GramGreedyState PlaceCell::gram_greedy_seed(const CullScope& scope)
+State seed(const CullScope& scope)
 {
     const Eigen::MatrixXf& similarity = scope.similarity;
     const std::vector<int>& alive = scope.alive;
     const int na = int(alive.size());
-    GramGreedyState state;
+    State state;
 
     Eigen::MatrixXd K_AA(na, na);
     for(int a = 0; a < na; a++)
         for(int b = 0; b < na; b++)
-            K_AA(a, b) = double(similarity(alive[a], alive[b])) + (a == b ? gram_greedy_jitter : 0.0);
+            K_AA(a, b) = double(similarity(alive[a], alive[b])) + (a == b ? jitter : 0.0);
     state.M = K_AA.ldlt().solve(Eigen::MatrixXd::Identity(na, na));
 
     state.W_rows.reserve(scope.history.size());
@@ -46,14 +46,13 @@ PlaceCell::GramGreedyState PlaceCell::gram_greedy_seed(const CullScope& scope)
     return state;
 }
 
-PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& scope, const GramGreedyState& state,
-                                                             const std::vector<char>& candidate)
+Proposal propose(const CullScope& scope, const State& state, const std::vector<char>& candidate)
 {
     const double tau = scope.tau;
     const int na = int(scope.alive.size());
     const CullObjective objective = scope.objective;
     constexpr double inf = std::numeric_limits<double>::infinity();
-    GramGreedyProposal best{-1, inf, 0.0, inf};
+    Proposal best{-1, inf, 0.0, inf};
     for(int a = 0; a < na; a++){
         if(state.removed[a] || !candidate[a]) continue;
         const double M_aa = state.M(a, a);
@@ -67,7 +66,7 @@ PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& sc
         for(std::size_t h = 0; h < state.W_rows.size(); h++){
             const double w = state.W_rows[h](a);
             const double price = w * w / M_aa;
-            const double allowed = state.v_h[h] > tau ? gram_greedy_over_budget_slack : tau - state.v_h[h];
+            const double allowed = state.v_h[h] > tau ? over_budget_slack : tau - state.v_h[h];
             if(price > allowed){ feasible = false; break; }
             worst = std::max(worst, state.v_h[h] + price);
             loss += price;
@@ -88,13 +87,12 @@ PlaceCell::GramGreedyProposal PlaceCell::gram_greedy_propose(const CullScope& sc
             score = loss;
         }
         if(score < best.score || (score == best.score && v_i < best.unique_information))
-            best = GramGreedyProposal{a, v_i, worst, score};
+            best = Proposal{a, v_i, worst, score};
     }
     return best;
 }
 
-void PlaceCell::gram_greedy_downdate(const CullScope& scope, GramGreedyState& state,
-                                     const GramGreedyProposal& proposal)
+void downdate(const CullScope& scope, State& state, const Proposal& proposal)
 {
     const int i = proposal.index;
     const double M_ii = state.M(i, i);
@@ -117,9 +115,9 @@ void PlaceCell::gram_greedy_downdate(const CullScope& scope, GramGreedyState& st
     state.v_h.push_back(proposal.unique_information);
 }
 
-void PlaceCell::gram_greedy_report(const CullScope& scope, const GramGreedyState& state, CullReport& report)
+void report(const CullScope& scope, const State& state, PlaceCell::CullReport& report)
 {
-    const std::vector<ExternalId>& row_ids = scope.row_ids;
+    const std::vector<PlaceCell::ExternalId>& row_ids = scope.row_ids;
     const std::vector<int>& alive = scope.alive;
     const int na = int(alive.size());
     const int max_per_call = scope.max_per_call;
@@ -144,17 +142,17 @@ void PlaceCell::gram_greedy_report(const CullScope& scope, const GramGreedyState
     }
 }
 
-void PlaceCell::cull_gram_greedy(const CullScope& scope, CullExecutor& execute, CullReport& report)
+void cull(const CullScope& scope, CullExecutor& execute, PlaceCell::CullReport& report, Profiler& profiler)
 {
-    const std::vector<ExternalId>& row_ids = scope.row_ids;
+    const std::vector<PlaceCell::ExternalId>& row_ids = scope.row_ids;
     const std::vector<int>& alive = scope.alive;
     std::vector<char> candidate = scope.candidate;
     const int na = int(alive.size());
     const int max_per_call = scope.max_per_call;
     Profiler::Stopwatch stage;
 
-    GramGreedyState state = gram_greedy_seed(scope);
-    profiler_.record("cull_keyframes/inverse", stage.ms(), na);
+    State state = seed(scope);
+    profiler.record("cull_keyframes/inverse", stage.ms(), na);
     stage.restart();
     if(scope.history.empty() && scope.centred && !scope.local)
         PLACECELL_WARN_ONCE("cull_keyframes", "centring set == alive set (no history yet): K_AA is rank-deficient "
@@ -163,7 +161,7 @@ void PlaceCell::cull_gram_greedy(const CullScope& scope, CullExecutor& execute, 
     int num_alive = na;
     int num_culled = 0;
     while(num_alive > scope.stop_at && (max_per_call <= 0 || num_culled < max_per_call)){
-        const GramGreedyProposal proposal = gram_greedy_propose(scope, state, candidate);
+        const Proposal proposal = propose(scope, state, candidate);
         if(proposal.index < 0)
             break;
 
@@ -175,15 +173,15 @@ void PlaceCell::cull_gram_greedy(const CullScope& scope, CullExecutor& execute, 
         }
         num_culled++;
         num_alive--;
-        report.culled.push_back(CullReport::CulledView{row_ids[alive[proposal.index]],
+        report.culled.push_back(PlaceCell::CullReport::CulledView{row_ids[alive[proposal.index]],
                                                        float(proposal.unique_information),
                                                        float(proposal.worst_after), num_alive});
-        gram_greedy_downdate(scope, state, proposal);
+        downdate(scope, state, proposal);
     }
 
-    gram_greedy_report(scope, state, report);
-    profiler_.record("cull_keyframes/greedy", stage.ms() - execute.ms(), na, std::int64_t(state.W_rows.size()));
+    gram_greedy::report(scope, state, report);
+    profiler.record("cull_keyframes/greedy", stage.ms() - execute.ms(), na, std::int64_t(state.W_rows.size()));
 }
 
 
-} // namespace placecell
+} // namespace placecell::gram_greedy

@@ -276,6 +276,12 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
   becomes history here only when the callback returns true. Returns a `CullReport` with the culled
   views, the counts and the unique information of every alive view left in scope. Only the
   `"gram-greedy"` method exists; any other name throws `std::invalid_argument`.
+- hand-off to the method: the shell fills a `CullScope` and builds a `CullExecutor` around
+  `try_cull`, both from the internal header `src/placecell_cull_method.h`, with a mark-culled
+  lambda that sets `culled_[row]` under `mutex_`, so the method never sees the store; the switch
+  on `CullMethod` then calls `gram_greedy::cull(scope, execute, report, profiler_)`
+  ([`placecell_gram_greedy.md`](placecell_gram_greedy.md#cull)). The bullets below summarise that
+  method; its page is the description.
 - stages, each a profiler sub-row: `snapshot+centring` (kernel, ids and flags copied under the
   lock after [`materialise_kernel_locked`](#materialise_kernel_locked); [`usable_rows`](#usable_rows)
   drops NaN rows with a WARN once; [`centre_kernel`](#centre_kernel) when `parameters.centred`),
@@ -301,19 +307,22 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
 - early returns with an empty report: fewer than 3 views, alive count already at the stop, or no
   candidate. A WARN once fires when the centring set equals the alive set (no history, map scope,
   centred): `K_AA` is then rank-deficient and the scores of that call are jitter-scale (issue #5).
-- the report is finished on every exit path (`ReportOnExit` destructor): `alive_after`,
-  `worst_history`, `history_over_budget` (rows above tau), `reached_max_per_call`, and the
-  `1/M_ii` of every alive view in scope (NaN where `M_ii ≤ 0`) as `alive_unique_information`; then
-  [`on_cull_call`](#on_add-on_set_kernel-on_set_items-on_query-on_cull_call).
+- the report: the shell sets `views_total`, `candidates` and the early-return `alive_after`; the
+  method fills `culled` and, through [`gram_greedy::report`](placecell_gram_greedy.md#report),
+  `alive_after`, `worst_history`, `history_over_budget` (rows above tau), `reached_max_per_call`
+  and the `1/M_ii` of every alive view in scope (NaN where `M_ii ≤ 0`) as
+  `alive_unique_information`. Every exit path then calls
+  [`on_cull_call`](#on_add-on_set_kernel-on_set_items-on_query-on_cull_call) (`ReportOnExit` destructor).
 - called from: AllFeature-VSLAM's `LocalMapping::cull_keyframes_information`
   ([`LocalMapping.cc#L651`](https://github.com/alejandrofontan/AllFeature-VSLAM/blob/main/src/LocalMapping.cc#L651)),
   the offline selection in [`kernel_demo.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/kernel_demo.cpp#L214 "cell.cull_keyframes(")
   and [`synthetic_demo.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/synthetic_demo.cpp#L116 "cell.cull_keyframes("),
   [`megaloc_embedder_smoke.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/megaloc_embedder_smoke.cpp#L110 "store.cull_keyframes("),
   the Python binding ([`bindings.cpp`](https://github.com/alejandrofontan/placecell/blob/main/python/bindings.cpp#L236 "self.cull_keyframes(")).
-- parameters: `CullParameters` — see [Parameters](#parameters-read-by-this-file). The derivation,
-  the centring rationale and the handling of a tau changed between calls are in the comment block
-  at the top of the function body; read it before changing the loop.
+- parameters: `CullParameters` — see [Parameters](#parameters-read-by-this-file). The centring
+  rationale, the scope and count-driven mode are in the comment block at the top of the function
+  body; the handling of a tau changed between calls and the downdate are on
+  [`placecell_gram_greedy.md`](placecell_gram_greedy.md); read both before changing the loop.
 
 ### `set_protected`
 
@@ -496,7 +505,7 @@ placecell has no settings file. Every tunable is a struct with member initialise
 | `KernelOptions` | `clip_to_psd` | false | [`set_kernel`](#set_kernel) | clip negative eigenvalues at 0 and renormalise to unit diagonal |
 | `ItemOptions` | `normalization` | `cosine` | [`set_items`](#set_items) | accepted, ignored: cosine is the only normalisation |
 | `CullParameters` | `method` | `"gram-greedy"` | [`cull_keyframes`](#cull_keyframes) | the only method; anything else throws |
-| `CullParameters` | `objective` | `"unique"` | `gram_greedy_propose` ([`placecell_gram_greedy.md`](placecell_gram_greedy.md#gram_greedy_propose)) | ranking of the feasible candidates: `unique`, `minimax` or `total-loss` |
+| `CullParameters` | `objective` | `"unique"` | `gram_greedy::propose` ([`placecell_gram_greedy.md`](placecell_gram_greedy.md#propose)) | ranking of the feasible candidates: `unique`, `minimax` or `total-loss` |
 | `CullParameters` | `max_unexplained` | 0.1 | [`cull_keyframes`](#cull_keyframes) | tau: the most any alive or history view may be left unexplained |
 | `CullParameters` | `centred` | true | [`cull_keyframes`](#cull_keyframes) | marginalise on the double-centred kernel |
 | `CullParameters` | `min_keyframes` | 10 | [`cull_keyframes`](#cull_keyframes) | never cull below this many alive views in scope |
