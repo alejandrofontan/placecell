@@ -447,12 +447,9 @@ private:
         CullObjective objective{CullObjective::unique};
     };
     // Executes a cull for a method: proposes a kernel row to the host with mutex_
-    // released, marks it culled on acceptance, accumulates the callback time (which the
-    // shell subtracts from the call's own timing). Defined here because every method
-    // file uses it.
-    // Proposes a kernel row to the host with mutex_ RELEASED (the host typically takes its
-    // own map mutex in the callback), marks the row culled on acceptance and accumulates the
-    // callback time, which the shell subtracts from the call's own timing.
+    // RELEASED (the host typically takes its own map mutex in the callback), marks the row
+    // culled on acceptance and accumulates the callback time, which the shell subtracts
+    // from the call's own timing. Defined here because every method file uses it.
     class CullExecutor
     {
     public:
@@ -483,9 +480,8 @@ private:
         double ms_{0.0};
         int count_{0};
     };
-    // The joint-information greedy rule on the Gram kernel; fills report.culled,
-    // alive_after, worst_history, history_over_budget, reached_max_per_call, alive_ids,
-    // alive_unique_information. Driver of the three steps below.
+    // The joint-information greedy rule on the Gram kernel; fills report.culled, the rest
+    // of the report through gram_greedy_report. Driver of the four steps below.
     void cull_gram_greedy(const CullScope& scope, CullExecutor& execute, CullReport& report);
     // Linear-algebra state of one gram-greedy call, indexed like scope.alive
     struct GramGreedyState
@@ -512,6 +508,9 @@ private:
     // After an accepted cull: rank-one downdate of M and W, v_h prices, the view joins the history
     static void gram_greedy_downdate(const CullScope& scope, GramGreedyState& state,
                                      const GramGreedyProposal& proposal);
+    // After the loop: alive_after, worst_history, history_over_budget, reached_max_per_call,
+    // alive_ids and alive_unique_information from the final state (counts from report.culled)
+    static void gram_greedy_report(const CullScope& scope, const GramGreedyState& state, CullReport& report);
     // Double-centre `kernel` over the rows flagged usable and renormalise to unit
     // diagonal (no-op below 3 usable rows)
     static void centre_kernel(Eigen::MatrixXf& kernel, const std::vector<char>& usable);
