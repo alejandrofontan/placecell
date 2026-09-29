@@ -149,7 +149,8 @@ public:
         bool unit_diagonal{true};
         // Compute the smallest eigenvalue (O(n^3): ~0.5 s at n = 1000, minutes at
         // n = 10000) and WARN when it is negative — the kernel is then not a valid
-        // covariance and cull_keyframes' scores degrade softly (issue #3)
+        // covariance and cull_keyframes is broken rather than degraded: views whose
+        // inverse pivot comes out non-positive are silently skipped (issue #3); clip it
         bool psd_check{true};
         // Project onto the PSD cone (clip negative eigenvalues at 0) and renormalise to
         // unit diagonal; implies the eigen-decomposition whatever psd_check says
@@ -318,9 +319,10 @@ public:
         // What gram-greedy minimises among the feasible candidates (those that keep
         // every view within tau): "unique" = the candidate's own unique information
         // v_i = 1/M_ii; "minimax" = the worst unexplained view after the cull;
-        // "total-loss" = v_i plus the rise of every other view's unexplained
-        // information (history prices and alive frames). Ties go to the smaller v_i,
-        // then the lowest kernel row.
+        // "total-loss" = v_i plus the rise of every history view's unexplained
+        // information plus the rise of every other alive view's unique information
+        // (experimental, see docs/notes/2026-09-29_cull_objectives.md). Ties go to the
+        // smaller v_i, then the lowest kernel row.
         std::string objective{"unique"};
         // tau: max unexplained information any view (alive or history) may be left with
         float max_unexplained{0.1f};
@@ -336,8 +338,9 @@ public:
         int max_per_call{0};
         // Never cull the first inserted view (it anchors the host's map)
         bool protect_first{true};
-        // Count-driven mode (0 = off): cull the least unique alive view, one at a time,
-        // until this many alive views remain in scope, ignoring max_unexplained (the
+        // Count-driven mode (0 = off): cull one view at a time, in the order `objective`
+        // gives (the least unique alive view by default), until this many alive views
+        // remain in scope, ignoring max_unexplained (the
         // history constraint is not enforced either) — the offline "best N keyframes"
         // selection of a sequence. min_keyframes and the protections still apply, so
         // fewer culls than requested can happen (report.alive_after tells).
@@ -360,8 +363,9 @@ public:
         float worst_history{0.0f};            // max unexplained over the history rows
         int history_over_budget{0};           // history rows above tau (tau was lowered)
         bool reached_max_per_call{false};
-        // Unique information v_i = 1/(K_AA^-1)_ii of every alive view in scope after the
-        // call (NaN where the inverse is not positive) — what the next call would score
+        // Unique information v_i = 1/(K_AA^-1)_ii of every alive view in scope at the end
+        // of the call (NaN where the inverse is not positive); the next call re-seeds from
+        // a fresh snapshot, so its scores match only while the kernel and the scope do
         std::vector<ExternalId> alive_ids;
         std::vector<float> alive_unique_information;
     };
@@ -371,7 +375,8 @@ public:
     // it for the rest of this call (e.g. the host deferred the erase).
     using CullCallback = std::function<bool(ExternalId)>;
 
-    // Greedy joint-information culling on the kernel (see the .cpp for the maths).
+    // Greedy joint-information culling on the kernel (the maths:
+    // docs/reference/placecell_gram_greedy.md and paper/sec/03_methodology.tex).
     // Alive views = stored, not culled; candidates = alive, unprotected, in scope.
     // With parameters.target_alive > 0 the same greedy order runs count-driven instead
     // of tau-driven: it stops when that many views are alive (see CullParameters).
@@ -379,7 +384,7 @@ public:
     // (the host's covisibility window): candidates and explainers come from the
     // window, and history is reduced to the rows whose best alive explainer (over the
     // whole map) lies in it. The callback is invoked WITHOUT the internal lock held.
-    // Throws std::invalid_argument for an unknown method.
+    // Throws std::invalid_argument for an unknown method or objective.
     CullReport cull_keyframes(const CullParameters& parameters, const CullCallback& try_cull,
                               const std::vector<ExternalId>* local_window = nullptr);
 

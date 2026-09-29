@@ -270,9 +270,9 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
                                                 const CullCallback& try_cull,
                                                 const std::vector<ExternalId>* local_window)
 ```
-- culls, one at a time, the alive candidate whose unique information `v_i = 1/(K_AA⁻¹)_ii` is
-  smallest, such that every view ever inserted (each history row and the candidate itself) stays
-  at or below `tau = max_unexplained`. The host performs each removal through `try_cull`; the view
+- culls, one at a time, among the alive candidates that keep every view ever inserted (each
+  history row and the candidate itself) at or below `tau = max_unexplained`, the one that
+  minimises `parameters.objective` — by default its unique information `v_i = 1/(K_AA⁻¹)_ii`. The host performs each removal through `try_cull`; the view
   becomes history here only when the callback returns true. Returns a `CullReport` with the culled
   views, the counts and the unique information of every alive view left in scope. Only the
   `"gram-greedy"` method exists; any other name throws `std::invalid_argument`.
@@ -294,8 +294,8 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
   still act as explainers.
 - feasibility of a candidate: `v_i ≤ tau`, and for every history row the price `W_hi² / M_ii` of
   removing it must not exceed `tau − v_h`, or `0.01` for a row already above tau (tau was lowered
-  between calls), which may deteriorate by at most that slack. The candidate with the smallest feasible
-  `v_i` is proposed; none feasible ends the loop.
+  between calls), which may deteriorate by at most that slack. The feasible candidate with the
+  smallest objective score is proposed; none feasible ends the loop.
 - after an accepted cull: rank-one downdate `M' = M − m mᵀ / M_ii`, every history row
   `W_h' = W_h − (W_hi / M_ii) m` and `v_h += W_hi² / M_ii`, the row and column of the culled view
   zeroed in `M`, and the culled view joins the history with `v = v_i` (Schur identity).

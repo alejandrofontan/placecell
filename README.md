@@ -69,6 +69,9 @@ Such a store has no descriptors: `add()` is refused and the descriptor query ret
 culling, snapshots and dumps work as usual. `params.max_unexplained` (tau) bounds what a cull may
 leave unexplained; alternatively `params.target_alive = N` runs the same greedy order until N views
 remain (count-driven, tau ignored) — the "keep the N least redundant frames" selection.
+`params.objective` picks which feasible view each cull removes first: `"unique"` (default, the
+most redundant view), `"minimax"` (the one leaving the worst-off view least bad) or
+`"total-loss"` (experimental); see [`docs/notes/2026-09-29_cull_objectives.md`](docs/notes/2026-09-29_cull_objectives.md).
 
 ## Item-backed stores (covisibility)
 
