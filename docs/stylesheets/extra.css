@@ -1,0 +1,31 @@
+/* Site-wide tweaks to the Material theme. */
+
+/* Use more of a wide screen: Material centres the whole layout (header, navigation, content,
+   table of contents) in a 61rem column, which leaves wide empty margins on large monitors. */
+.md-grid {
+  max-width: 90rem;
+}
+
+/* Justified body text (paragraphs, list items and the text inside boxes); hyphenation
+   keeps justified lines from opening wide gaps. Tables, code and headings stay as they are. */
+.md-typeset p,
+.md-typeset li {
+  text-align: justify;
+  hyphens: auto;
+}
+
+/* ...but never hyphenate identifiers. */
+.md-typeset code {
+  hyphens: none;
+}
+
+/* Diagrams. Material renders Mermaid itself, inside a closed shadow root, with its own theme
+   CSS driven by these variables (they inherit into the shadow root; plain selectors do not).
+   Node colours come from each diagram's classDef. */
+.md-typeset .mermaid {
+  --md-mermaid-edge-color: #8195fb;                              /* VSLAM-LAB periwinkle */
+  --md-mermaid-label-bg-color: var(--md-default-bg-color);
+  --md-mermaid-label-fg-color: var(--md-default-fg-color);
+  --md-default-fg-color--lightest: rgba(129, 149, 251, 0.08);    /* subgraph fill */
+  --md-default-fg-color--lighter: rgba(129, 149, 251, 0.45);     /* subgraph border */
+}

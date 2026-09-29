@@ -1,6 +1,66 @@
-# `src/placecell_gram_greedy.cpp`
+# Gram-greedy culling
 
-## State
+The culling method behind `cull_keyframes` (`src/placecell_gram_greedy.{h,cpp}`): it removes alive views one at a time, by default the one the others explain best, as long as no view ever inserted is left with more than tau of unexplained information.
+
+```mermaid
+---
+config:
+  htmlLabels: false
+  themeCSS: "
+    text, tspan { font-family: var(--md-text-font-family), sans-serif; }
+    .edgePath .path, .flowchart-link { stroke: var(--md-mermaid-edge-color); }
+    .marker, marker path { fill: var(--md-mermaid-edge-color); stroke: var(--md-mermaid-edge-color); }
+    .edgeLabel rect, .labelBkg { fill: var(--md-default-bg-color); opacity: 1; }
+    .edgeLabel text, .edgeLabel tspan { fill: var(--md-default-fg-color); }
+    .cluster rect { fill: var(--md-default-fg-color--lightest); stroke: var(--md-default-fg-color--lighter); }
+    .cluster text, .cluster tspan { fill: var(--md-default-fg-color); }"
+  themeVariables:
+    fontSize: 19px
+  flowchart:
+    htmlLabels: false
+    nodeSpacing: 25
+    rankSpacing: 30
+    curve: basis
+    padding: 14
+---
+flowchart LR
+    SHELL([cull_keyframes]) --> SEED("`**seed**
+    M = K_AA⁻¹`")
+    SEED --> PROP
+    subgraph LOOP [" one cull at a time "]
+        PROP("`**propose**
+        best feasible candidate`") e1@-->|proposal| EXEC{"`host
+        culls it?`"}
+        EXEC e2@-->|yes| DOWN("`**downdate**
+        rank-one update`")
+        DOWN e3@--> PROP
+        EXEC -. no .-> PROP
+    end
+    e1@{ animate: true }
+    e2@{ animate: true }
+    e3@{ animate: true }
+    PROP -- "none, or stop / cap reached" --> REP("`**report**`")
+    REP --> OUT([back to the shell])
+
+    click SEED "#seed"
+    click PROP "#propose"
+    click DOWN "#downdate"
+    click REP "#report"
+
+    %% VSLAM-LAB logo squares: cyan #b5f3f9, periwinkle #8195fb, lavender #a59ddf
+    classDef entry fill:#8195fb,stroke:#5f74d6,stroke-width:2px,color:#fff
+    classDef step fill:#b5f3f9,stroke:#7fcfd8,stroke-width:2px,color:#1b2a4a
+    classDef check fill:#a59ddf,stroke:#7e75c4,stroke-width:2px,color:#1b2a4a
+
+    class SHELL,OUT entry
+    class SEED,PROP,DOWN,REP step
+    class EXEC check
+    linkStyle default stroke-width:2px
+```
+
+## Data structures
+
+### `gram_greedy::State` {#state data-toc-label="State"}
 
 `State` belongs to one call, indexed like `scope.alive`; it is built by the seed and discarded when the driver returns.
 
@@ -16,7 +76,9 @@ struct State
 
 [`seed`](#seed) builds all four: `M` from the alive block, one `W_rows` entry $\mathbf{w}_h = \mathbf{M}\mathbf{k}_{hA}^{\!\top}$ and one `v_h` per history row in scope, and `removed` all zero. [`downdate`](#downdate) is the only other writer: each accepted cull updates `M` and every `W_rows` / `v_h` entry, appends one entry for the culled view, and sets its `removed` flag. The row and column of a removed view in `M` are exactly zero, not just zero up to rounding.
 
-`Proposal` is what [`propose`](#propose) returns:
+### `gram_greedy::Proposal` {#proposal data-toc-label="Proposal"}
+
+What [`propose`](#propose) returns.
 
 ```cpp
 struct Proposal
@@ -30,37 +92,9 @@ struct Proposal
 
 [`cull`](#cull) uses `index` for the stop test, the executor, a refusal and the report id, and copies `unique_information` and `worst_after` into the `CulledView` (`worst_after` becomes `worst_unexplained_after`). [`downdate`](#downdate) reads `index` and takes `unique_information` as the culled view's $v_h$. `score` never leaves `propose`: it only serves the comparison with the running best.
 
-## Flow
+## Functions
 
-```mermaid
-%%{init: {"themeVariables": {"fontSize": "19px"}, "flowchart": {"nodeSpacing": 25, "rankSpacing": 30}}}%%
-flowchart LR
-    SHELL([cull_keyframes]) --> SEED["<b>seed</b><br/>M = K_AA⁻¹"]
-    SEED --> PROP["<b>propose</b><br/>best feasible candidate"]
-    PROP -- proposal --> EXEC{host culls it?}
-    EXEC -- yes --> DOWN["<b>downdate</b><br/>rank-one update"] --> PROP
-    EXEC -- no --> PROP
-    PROP -- "none, or stop / cap reached" --> REP["<b>report</b>"]
-    REP --> OUT([back to the shell])
-
-    click SEED "#seed"
-    click PROP "#propose"
-    click DOWN "#downdate"
-    click REP "#report"
-
-    %% VSLAM-LAB logo squares: cyan #b5f3f9, periwinkle #8195fb, lavender #a59ddf
-    classDef entry fill:#8195fb,stroke:#5f74d6,color:#fff
-    classDef step fill:#b5f3f9,stroke:#7fcfd8,color:#1b2a4a
-    classDef check fill:#a59ddf,stroke:#7e75c4,color:#1b2a4a
-
-    class SHELL,OUT entry
-    class SEED,PROP,DOWN,REP step
-    class EXEC check
-```
-
-## Driver
-
-### `cull`
+### `gram_greedy::cull` {#cull data-toc-label="cull"}
 
 ```cpp
 void cull(const CullScope& scope, CullExecutor& execute, PlaceCell::CullReport& report, Profiler& profiler)
@@ -74,17 +108,18 @@ Each iteration asks [`propose`](#propose) for a candidate and hands it to the ho
 
 `scope` is the shell's snapshot (kernel, alive and history rows, candidates, budget, objective). `execute` runs a cull on the host and marks the row culled on acceptance. `report` arrives with `views_total` and `candidates` set by the shell; `cull` appends to `report.culled` and fills the rest through [`report`](#report). `profiler` is the store's; `cull` records `cull_keyframes/inverse` (the seed, size $|A|$) and `cull_keyframes/greedy` (the loop and the report minus the executor's time, sizes $|A|$ and the history count at the end of the call).
 
-!!! note
+!!! note "Locking and the store"
     The executor calls the host's callback with `mutex_` not held (the shell never holds it here; the host typically takes its own map lock in the callback). On acceptance it calls the mark-culled function the shell gave it, which sets the row's culled flag under `mutex_`. That is the only way a cull reaches the store.
 
-!!! warning
+!!! warning "Degenerate first cull (issue #5)"
     When the history in scope is empty, the kernel is centred and the scope is the whole map, the centring set equals the alive set: $\mathbf{K}_{AA}$ is rank-deficient and every $v_i$ of the call is jitter-scale (issue #5). `cull` logs this once per process, after the seed and before the loop.
 
-**Cost** O(|A|³ + |H| |A|²) for the seed, then per iteration one propose (O(|A| |H|), plus O(|A|²) for `total-loss`), per accepted cull one downdate (O(|H| |A| + |A|²)), then one report (O(|H| + |A|)); $|H|$ grows by one per accepted cull. Timed as `cull_keyframes/inverse` (seed) and `cull_keyframes/greedy` (the rest, minus the executor's time, which the shell records as `cull_keyframes/host_callback`)
+!!! info "Cost"
+    **Time O(|A|³ + |H| |A|² + r |A| (|H| + |A|)), space O(|A|² + |H| |A|)**, with r the loop iterations (accepted and refused culls) and |H| the history at the end of the call.
 
-## Steps
+    The seed is the O(|A|³ + |H| |A|²) part; each iteration adds one propose (O(|A| |H|), plus O(|A|²) for `total-loss`) and, when accepted, one downdate (O(|H| |A| + |A|²)); the report adds O(|H| + |A|). Timed as `cull_keyframes/inverse` (seed) and `cull_keyframes/greedy` (the rest, minus the executor's time, which the shell records as `cull_keyframes/host_callback`).
 
-### `seed`
+### `gram_greedy::seed` {#seed data-toc-label="seed"}
 
 ```cpp
 State seed(const CullScope& scope)
@@ -104,15 +139,18 @@ The rows $\mathbf{w}_h$ form $\mathbf{W} = \mathbf{K}_{HA}\mathbf{M}$ (paper eq.
 
 Returns the `State`: `M` as above, `W_rows` and `v_h` with one entry per history row in `scope.history` order, and `removed` with one zero flag per alive position.
 
-!!! warning
+!!! warning "Unchecked pivots (issue #3)"
     The LDLT pivots are not checked. An indefinite kernel (an unclipped `set_kernel` matrix) can leave non-positive $M_{ii}$, which [`propose`](#propose) then skips without a word (issue #3).
 
-!!! note
+!!! note "Jitter gap with views culled in the same call"
     $K_{hh}$ and $\mathbf{k}_{hA}$ carry no jitter while $\mathbf{M}$ does, so a seeded $v_h$ sits $\varepsilon$ below the Schur identity $1/M_{ii}$ that [`downdate`](#downdate) assigns to views culled in the same call (exactly $\varepsilon$ in exact arithmetic, when the kernel and the scope are unchanged). Harmless at $10^{-6}$.
 
-**Cost** O(|A|³) for the inverse + O(|H| |A|²) for the history rows; space O(|A|² + |H| |A|). Timed as `cull_keyframes/inverse`
+!!! info "Cost"
+    **Time O(|A|³ + |H| |A|²), space O(|A|² + |H| |A|)**
 
-### `propose`
+    O(|A|³) for the inverse, O(|H| |A|²) for the history rows. Once per call, timed as `cull_keyframes/inverse`.
+
+### `gram_greedy::propose` {#propose data-toc-label="propose"}
 
 ```cpp
 Proposal propose(const CullScope& scope, const State& state, const std::vector<char>& candidate)
@@ -142,14 +180,17 @@ Ties go to the smaller $v_i$, then to the lowest kernel row (insertion order). I
 
 Returns a `Proposal`: `index` is the position in `scope.alive`, or −1 when no candidate is feasible; `unique_information` is $v_i$; `worst_after` is the worst unexplained view right after the cull; `score` is the objective value that won.
 
-!!! warning
+!!! warning "Non-positive pivots and infinite total loss"
     A candidate with $M_{ii} \le 0$ (an indefinite kernel, issue #3, or rounding drift) is skipped without a word: its $v_i$ would be negative and win the argmin. A feasible `total-loss` candidate whose downdate leaves some pivot $\le 0$ scores $+\infty$, but it still beats the initial empty proposal, so it is returned when no candidate has a finite score.
 
 **Implementation.** One scan over the alive positions. With `unique`, a candidate whose $v_i$ is at or above the running best is skipped before the history scan, since it cannot win. The history scan of a candidate stops at its first veto, and accumulates the worst view and the summed prices on the way. `total-loss` then adds the rise of each other alive view, read off the diagonal of the downdated $\mathbf{M}$ (paper eq. `downdate_M`), without forming it.
 
-**Cost** O(|A| |H|), plus O(|A|²) for `total-loss`; space O(1). Once per loop iteration, inside `cull_keyframes/greedy`
+!!! info "Cost"
+    **Time O(|A| |H|), or O(|A| (|H| + |A|)) with `total-loss`; space O(1)**
 
-### `downdate`
+    One history scan per candidate that passes the early checks; `total-loss` adds one pass over the other alive views per candidate. Once per loop iteration, inside `cull_keyframes/greedy`.
+
+### `gram_greedy::downdate` {#downdate data-toc-label="downdate"}
 
 ```cpp
 void downdate(const CullScope& scope, State& state, const Proposal& proposal)
@@ -169,15 +210,18 @@ The culled view joins the history. Its row is $\mathbf{w}_i = \mathbf{M}\mathbf{
 
 `scope` supplies the kernel for the new history row. `state` is updated in place. `proposal` is the accepted proposal from [`propose`](#propose); the state has not changed since it was computed, because a refusal never touches it.
 
-!!! note
+!!! note "Rounding dust and drift"
     Entry $i$ of each existing $\mathbf{w}_h$ is $0$ in exact arithmetic but keeps rounding dust, which is never read again: [`propose`](#propose) skips removed positions, and a later downdate reads only its own column. Nothing in a call re-factorises $\mathbf{M}$, so rounding accumulates over the culls of one call.
 
-!!! note
+!!! note "Jitter gap with the next seed"
     $1/M_{ii}$ is the unexplained information under the jittered kernel, so the culled view's $v_h$ sits $\varepsilon$ above the $K_{hh} - \mathbf{w}_h \cdot \mathbf{k}_{hA}$ that [`seed`](#seed) computes for the same view in the next call (exactly $\varepsilon$ in exact arithmetic, when the kernel and the scope are unchanged).
 
-**Cost** O(|H| |A|) for the history rows + O(|A|²) for $\mathbf{M}$ and the new row; space O(|A|). Once per accepted cull, inside `cull_keyframes/greedy`
+!!! info "Cost"
+    **Time O(|A| (|H| + |A|)), space O(|A|)**
 
-### `report`
+    O(|H| |A|) for the history rows, O(|A|²) for $\mathbf{M}$ and the new row. Once per accepted cull, inside `cull_keyframes/greedy`.
+
+### `gram_greedy::report` {#report data-toc-label="report"}
 
 ```cpp
 void report(const CullScope& scope, const State& state, PlaceCell::CullReport& report)
@@ -197,7 +241,10 @@ The counts come from the report itself: `report.culled` holds one `CulledView` p
 
 `scope` supplies the ids, tau and the cap. `state` is the final state of the call. `report` must already hold every accepted cull in `culled`.
 
-!!! note
+!!! note "Scores hold for this call only"
     `alive_unique_information` holds the scores at the end of this call. The next call re-seeds from a fresh snapshot, so its scores differ once the kernel, the scope or the centring set changed.
 
-**Cost** O(|H| + |A|); space O(|A|) for the two alive vectors. Once per call, inside `cull_keyframes/greedy`
+!!! info "Cost"
+    **Time O(|H| + |A|), space O(|A|)**
+
+    One pass over the history for the worst row and the over-budget count, one over the alive positions for the two alive vectors. Once per call, inside `cull_keyframes/greedy`.
