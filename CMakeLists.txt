@@ -53,6 +53,8 @@ endif()
 # ---- Library ----------------------------------------------------------------
 add_library(placecell
     src/placecell.cpp
+    src/placecell_items.cpp
+    src/placecell_query.cpp
     src/placecell_events.cpp
     src/placecell_cull.cpp
     src/placecell_gram_greedy.cpp
