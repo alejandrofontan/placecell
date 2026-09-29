@@ -1,52 +1,34 @@
 # `src/placecell_gram_greedy.cpp`
 
-The gram-greedy culling method. The shell, [`cull_keyframes`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_cull.cpp#L197 "case CullMethod::gram_greedy:"),
-builds a `CullScope` (the kernel snapshot, the alive and history rows in scope, the candidates,
-tau, the stop count, the cap and the objective) and a `CullExecutor`, and hands both to
-[`gram_greedy::cull`](#cull), with its profiler. The driver seeds the linear-algebra state once, then
-culls one view at a time: [`propose`](#propose) picks the feasible
-candidate, the executor asks the host to erase it, and [`downdate`](#downdate)
-applies an accepted cull by rank-one updates, so the only O(|A|³) step of a call is the seed's
-inverse. [`report`](#report) fills the report from the final state. All five are
-free functions in `namespace placecell::gram_greedy` that see neither the store nor its lock;
-the executor is the only way a cull reaches the store. The
-source carries no comments, so this page is the description of the file; the derivation is
-`paper/sec/03_methodology.tex` (§ Unexplained information, § Greedy joint-information culling).
-
-Sources: `src/placecell_gram_greedy.cpp` and its internal header `src/placecell_gram_greedy.h`
-(`namespace placecell::gram_greedy`: `State`, `Proposal`, the two constants and the five
-declarations); `CullScope`, `CullExecutor`, `CullObjective` in the internal header
-`src/placecell_cull_method.h`, shared by every method. Neither header is installed; of the culler, the public
-`include/placecell/placecell.h` declares `cull_keyframes` and the types the host passes and gets back
-(`CullParameters`, `CullCallback`, `CullReport`). The shell is on
-[`placecell.md`](placecell.md). Reading notes:
-[`docs/review/placecell_gram_greedy.md`](../review/placecell_gram_greedy.md).
-
 ## State
 
-`State` belongs to one call, indexed like `scope.alive`; it is built by the seed and
-discarded when the driver returns.
+`State` belongs to one call, indexed like `scope.alive`; it is built by the seed and discarded when the driver returns.
 
-| Member | Holds | Written by |
-|---|---|---|
-| `M` | $\mathbf{K}_{AA}^{-1}$ over `scope.alive`, jittered; the row and column of a view culled in this call are exactly zero | [`seed`](#seed), [`downdate`](#downdate) |
-| `W_rows` | one vector per history row, $\mathbf{w}_h = \mathbf{M}\mathbf{k}_{hA}^{\!\top}$ over the alive positions | seed (the history in scope), downdate (every row updated, one appended per accepted cull) |
-| `v_h` | the unexplained information of each history row, same order as `W_rows` | seed, downdate |
-| `removed` | one flag per alive position, set for the views culled in this call | seed (all zero), downdate |
+```cpp
+struct State
+{
+    Eigen::MatrixXd M;                     // K_AA^-1 (jittered); zero row/column once removed
+    std::vector<Eigen::VectorXd> W_rows;   // K_HA M, one row per history view (seeded, then one per cull)
+    std::vector<double> v_h;               // unexplained information of each history row
+    std::vector<char> removed;             // culled in this call
+};
+```
+
+[`seed`](#seed) builds all four: `M` from the alive block, one `W_rows` entry $\mathbf{w}_h = \mathbf{M}\mathbf{k}_{hA}^{\!\top}$ and one `v_h` per history row in scope, and `removed` all zero. [`downdate`](#downdate) is the only other writer: each accepted cull updates `M` and every `W_rows` / `v_h` entry, appends one entry for the culled view, and sets its `removed` flag. The row and column of a removed view in `M` are exactly zero, not just zero up to rounding.
 
 `Proposal` is what [`propose`](#propose) returns:
 
-| Field | Holds | Read by |
-|---|---|---|
-| `index` | position in `scope.alive`, −1 = no feasible candidate | driver (stop test, executor, refusal, report id), downdate |
-| `unique_information` | $v_i = 1/M_{ii}$ | driver (refusal DEBUG line, `CulledView`), downdate (the culled view's $v_h$) |
-| `worst_after` | the largest unexplained view right after the cull | driver (`CulledView::worst_unexplained_after`) |
-| `score` | the value of `scope.objective` that won | propose only (comparison with the running best) |
+```cpp
+struct Proposal
+{
+    int index;                    // position in scope.alive, -1 = no feasible candidate
+    double unique_information;    // v_i = 1/M_ii
+    double worst_after;           // max unexplained view right after the cull
+    double score;                 // the value of scope.objective that won (v_i, worst_after or the total loss)
+};
+```
 
-## Call graph
-
-- **[`cull`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L145 "void cull(const CullScope& scope")** → [`seed`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L23 "State seed(const CullScope& scope)"); per iteration [`propose`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L49 "Proposal propose(const CullScope& scope"), [`CullExecutor::operator()`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_cull_method.h#L71 "bool operator()(const int row)"), [`downdate`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L95 "void downdate(const CullScope& scope"); after the loop [`report`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.cpp#L118 "void report(const CullScope& scope")
-- called from the shell's switch in [`cull_keyframes`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_cull.cpp#L197 "case CullMethod::gram_greedy:")
+[`cull`](#cull) uses `index` for the stop test, the executor, a refusal and the report id, and copies `unique_information` and `worst_after` into the `CulledView` (`worst_after` becomes `worst_unexplained_after`). [`downdate`](#downdate) reads `index` and takes `unique_information` as the culled view's $v_h$. `score` never leaves `propose`: it only serves the comparison with the running best.
 
 ## Flow
 
@@ -219,23 +201,3 @@ The counts come from the report itself: `report.culled` holds one `CulledView` p
     `alive_unique_information` holds the scores at the end of this call. The next call re-seeds from a fresh snapshot, so its scores differ once the kernel, the scope or the centring set changed.
 
 **Cost** O(|H| + |A|); space O(|A|) for the two alive vectors. Once per call, inside `cull_keyframes/greedy`
-
-## Parameters read by this file
-
-Everything comes through `CullScope`, filled by the shell from `CullParameters` and the store,
-plus two constants in `src/placecell_gram_greedy.h`.
-
-| Source | Field | Value | Used in | Effect |
-|---|---|---|---|---|
-| `CullScope` | `similarity` | the kernel snapshot, raw or centred | [`seed`](#seed), [`downdate`](#downdate) | the matrix marginalised |
-| `CullScope` | `row_ids` | the external id of every kernel row | [`cull`](#cull), [`report`](#report) | ids for the DEBUG line, `CulledView` and `alive_ids` |
-| `CullScope` | `alive` | usable, not-culled rows in scope | [`seed`](#seed), [`downdate`](#downdate), [`cull`](#cull), [`report`](#report) | the columns of `M` / `W`; kernel rows handed to the executor and reported |
-| `CullScope` | `history` | usable, culled rows in scope | [`seed`](#seed), [`cull`](#cull) | the seeded rows of `W` and `v_h`; empty history triggers the issue-#5 warning |
-| `CullScope` | `candidate` | alive positions that are not protected | [`propose`](#propose) (through the driver's copy) | which views may be proposed |
-| `CullScope` | `tau` | `max_unexplained`, or +inf in count-driven mode | propose, report | the budget of every view; `history_over_budget` counts rows above it |
-| `CullScope` | `stop_at` | `min_keyframes`, or `max(min_keyframes, target_alive)` | driver | the loop stops at this many alive views in scope |
-| `CullScope` | `max_per_call` | `CullParameters::max_per_call` | driver, report | cap on accepted culls (0 = unlimited) |
-| `CullScope` | `objective` | `CullParameters::objective` parsed to `CullObjective` (`unique`) | [`propose`](#propose) | what the feasible candidates are ranked by: `v_i`, the worst view after the cull, or the total loss |
-| `CullScope` | `centred`, `local` | `CullParameters::centred`, window given | driver | the issue-#5 warning fires only when centred, map scope, no history |
-| constant | [`jitter`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.h#L45 "inline constexpr double jitter") | `1e-6` | seed | added to the diagonal of `K_AA`; the query's `solve_information` uses the same value as a separate literal (issue #6) |
-| constant | [`over_budget_slack`](https://github.com/alejandrofontan/placecell/blob/main/src/placecell_gram_greedy.h#L46 "inline constexpr double over_budget_slack") | `0.01` | propose | the most a history row already above tau may deteriorate per cull; rows within budget are bounded by `tau − v_h` instead |

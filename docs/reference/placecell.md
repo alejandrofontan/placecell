@@ -316,7 +316,7 @@ PlaceCell::CullReport PlaceCell::cull_keyframes(const CullParameters& parameters
 - called from: AllFeature-VSLAM's `LocalMapping::cull_keyframes_information`
   ([`LocalMapping.cc#L651`](https://github.com/alejandrofontan/AllFeature-VSLAM/blob/main/src/LocalMapping.cc#L651)),
   the offline selection in [`kernel_demo.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/kernel_demo.cpp#L214 "cell.cull_keyframes(")
-  and [`synthetic_demo.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/synthetic_demo.cpp#L116 "cell.cull_keyframes("),
+  and [`synthetic_demo.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/synthetic_demo.cpp#L135 "cell.cull_keyframes("),
   [`megaloc_embedder_smoke.cpp`](https://github.com/alejandrofontan/placecell/blob/main/examples/megaloc_embedder_smoke.cpp#L110 "store.cull_keyframes("),
   the Python binding ([`bindings.cpp`](https://github.com/alejandrofontan/placecell/blob/main/python/bindings.cpp#L236 "self.cull_keyframes(")).
 - parameters: `CullParameters` — see [Parameters](#parameters-read-by-this-file). The centring

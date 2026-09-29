@@ -66,6 +66,22 @@ tau 0.3.
 
 This is one sequence at one tau. No SLAM run with a non-default objective exists yet.
 
+## ETH `table_3` and the near-tau veto (2026-09-29)
+
+`kernel_demo` on ETH `table_3` `vpr-lab/D.npy` (1180 views, `--clip --raw --tau 0.3`), with a temporary counter in `propose` (not committed) that logged every veto by a history row within budget, and two temporary switches for the bound of those rows: a tolerance $\varepsilon$ (`v_h + price \le \tau + \varepsilon`) and the old rule $\max(\tau - v_h, \delta)$ from before `7a4005a`.
+
+| Objective | Current rule | $\varepsilon$ = 1e-6 … 1e-3 | Old rule | Vetoes by rows within 1e-3 of tau |
+|---|---|---|---|---|
+| `unique` | 91 kept, worst history 0.297 | identical | identical | 0 of 5 |
+| `minimax` | 90 kept, worst 0.299 | identical | identical | 0 of 325 |
+| `total-loss` | 142 kept, worst 0.300 | 139–140 kept, worst 0.300–0.301 | 84 kept, worst 0.326 | 734 of 1260 |
+
+- `unique` and `minimax` never meet a near-tau row: the bound of rows within budget does not matter for them.
+- `total-loss` minimises the summed rise, so it spreads small rises over many history rows and pushes them just under tau; those rows then veto. The prices they veto are real, not rounding: median 1.6e-4, 10th percentile 5.5e-6, 90th percentile 7e-4. A tolerance does not change the outcome (140 views even at 1e-3), and the old rule kept fewer views only by letting rows drift past the budget (0.326 at tau 0.3), the violation `7a4005a` fixed.
+- Decision: keep the strict bound for rows within budget (no tolerance). On `table_3`, `total-loss` keeps 142 views where `unique` keeps 91, which supports keeping it experimental.
+
+**Over-budget rows after lowering tau.** `synthetic_demo --lower-tau T2` (400 views, tau 0.3 lowered halfway): at T2 = 0.25 and 0.2 no row goes over budget; at 0.15 six rows do, at 0.1 sixteen. In neither case does the worst history row rise afterwards (rise +0.0000 over the 3–4 later calls), and every over-budget row is back within budget by the last call, because newly inserted views explain them. So the per-cull slack $\delta$ did not accumulate here. This is weak evidence: few calls follow the change, and longer runs (1600, 4000 views) insert nothing after the change (the trajectory only revisits known places), so they make no cull calls. A host that keeps culling after lowering tau without inserting near the old history is the untested case.
+
 ## Which to use (2026-09-29)
 
 - **`unique` stays the default.** It is the rule the paper derives and the cheapest.
@@ -92,3 +108,7 @@ This is one sequence at one tau. No SLAM run with a non-default objective exists
 - **The paper** describes only `unique`. If `minimax` or `total-loss` goes into the experiments,
   eq. `greedy_rule` needs the objective, and `total-loss` needs a justification for its third
   term.
+
+## The objectives in the paper (2026-09-29)
+
+`paper/sec/03_methodology.tex` now presents all three. Eq. `greedy_rule` is an argmin of a score $s_i$ ($v_i$ by default), and a new paragraph, *Ranking the feasible candidates*, defines the three scores in eq. `objectives` with the same caveats as this note: the constraints decide which views may go and the score only the order; minimax is the quantity tau bounds and costs nothing; the third term of total-loss is a rise in redundancy, not a loss, so the sum is a heuristic that pushes history rows towards tau. This answers the last open question above except for the experiments: no numbers are in the paper yet. The count-driven paragraph now restricts the joint-information property to the unique score, and states it through $\log\det\mathbf{K}_{A\setminus\{i\}} = \log\det\mathbf{K}_{AA} - \log v_i$.

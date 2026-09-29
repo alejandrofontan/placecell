@@ -17,8 +17,14 @@
  *
  * Usage:
  *   synthetic_demo [<output_dir>] [--views N] [--places P] [--tau T] [--min-info M]
- *                  [--verbosity off|error|warn|info|debug|trace] [--windows]
+ *                  [--lower-tau T2] [--verbosity off|error|warn|info|debug|trace] [--windows]
+ *
+ * --lower-tau T2 lowers the culler's tau to T2 halfway through the views (an online
+ * threshold change), so views culled under the old tau become history rows above budget,
+ * and prints how those rows evolve over the later calls (how many stay above T2, how far
+ * the worst one rises). Informational: it adds no exit-code check.
  */
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -38,6 +44,7 @@ int main(int argc, char** argv)
     std::string output_dir = "placecell_demo_out";
     int num_views = 400, num_places = 8;
     float tau = 0.3f, min_information = 0.05f;
+    float lower_tau = -1.0f;   // <= 0: tau stays fixed
     bool windows = false;
     placecell::PlaceCell::Options options;
     options.name = "synthetic";
@@ -51,6 +58,7 @@ int main(int argc, char** argv)
         else if(std::strcmp(argv[i], "--places") == 0) num_places = std::atoi(next("--places"));
         else if(std::strcmp(argv[i], "--tau") == 0) tau = float(std::atof(next("--tau")));
         else if(std::strcmp(argv[i], "--min-info") == 0) min_information = float(std::atof(next("--min-info")));
+        else if(std::strcmp(argv[i], "--lower-tau") == 0) lower_tau = float(std::atof(next("--lower-tau")));
         else if(std::strcmp(argv[i], "--windows") == 0) windows = true;
         else if(std::strcmp(argv[i], "--verbosity") == 0)
         {
@@ -91,6 +99,10 @@ int main(int argc, char** argv)
     cull_parameters.max_per_call = 3;
 
     int inserted = 0, culled_total = 0;
+    // --lower-tau: the over-budget history after the threshold change
+    bool lowered = false, first_after = true;
+    int lowered_at = -1, calls_after = 0, over_first = 0, over_max = 0, over_last = 0;
+    float worst_first = 0.0f, worst_max = 0.0f, worst_last = 0.0f;
     const int dwell = std::max(1, num_views / (num_places + num_places / 2));
     for(int t = 0; t < num_views; t++)
     {
@@ -99,6 +111,13 @@ int main(int argc, char** argv)
         const int place = step < num_places ? step : (step - num_places) % std::max(1, num_places / 2);
         const Eigen::VectorXf view = view_at(place, 0.35f);
         const placecell::PlaceCell::ExternalId id = placecell::PlaceCell::ExternalId(t);
+        if(lower_tau > 0.0f && !lowered && t == num_views / 2)
+        {
+            cull_parameters.max_unexplained = lower_tau;
+            cell.recorder().set_thresholds(lower_tau, min_information);
+            lowered = true;
+            lowered_at = t;
+        }
 
         const placecell::PlaceCell::Information info = cell.unexplained_information(view, nullptr, true);
         const bool redundant = info.unexplained < min_information;
@@ -115,8 +134,22 @@ int main(int argc, char** argv)
         {
             const auto report = cell.cull_keyframes(cull_parameters, [](placecell::PlaceCell::ExternalId) { return true; });
             culled_total += int(report.culled.size());
+            if(lowered)
+            {
+                calls_after++;
+                over_last = report.history_over_budget;
+                worst_last = report.worst_history;
+                if(first_after) { over_first = over_last; worst_first = worst_last; first_after = false; }
+                over_max = std::max(over_max, over_last);
+                worst_max = std::max(worst_max, worst_last);
+            }
         }
     }
+
+    if(lowered)
+        std::printf("lower-tau: tau %.3f -> %.3f at view %d; %d cull calls after: rows over budget first %d, max %d, last %d; "
+                    "worst history first %.4f, max %.4f, last %.4f (rise %+.4f)\n", tau, lower_tau, lowered_at, calls_after,
+                    over_first, over_max, over_last, worst_first, worst_max, worst_last, worst_max - worst_first);
 
     // ---- Checks ------------------------------------------------------------------------
     bool ok = true;
