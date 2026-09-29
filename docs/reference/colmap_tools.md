@@ -1,6 +1,6 @@
 # COLMAP kernel tools
 
-Three offline scripts in `tools/` (numpy only; matplotlib for the figure) that build a geometric kernel from a COLMAP reconstruction, run the culler on it, and compare it with the appearance kernel. The kernel is the pairwise shared information of the images' bundle-adjustment problem; placecell loads it like any host matrix, through [`set_kernel`](placecell.md#set_kernel), so nothing in the library depends on COLMAP.
+Four offline scripts in `tools/` (numpy only; matplotlib for the figure) that build a geometric kernel from a COLMAP reconstruction (or from COLMAP's matches plus a synthetic sequence's ground truth), run the culler on it, and compare it with the appearance kernel. The kernel is the pairwise shared information of the images' bundle-adjustment problem; placecell loads it like any host matrix, through [`set_kernel`](placecell.md#set_kernel), so nothing in the library depends on COLMAP.
 
 ```mermaid
 ---
@@ -23,6 +23,10 @@ config:
     padding: 14
 ---
 flowchart LR
+    DB[("`**colmap_database.db**
+    verified matches`")] --> GTM("`**colmap_gt_model.py**
+    ground-truth poses · depths`")
+    GTM -. "or" .-> MODEL
     MODEL[("`**COLMAP model**
     cameras · images · points3D`")] --> CIK("`**colmap_information_kernel.py**
     pairwise shared information`")
@@ -39,6 +43,7 @@ flowchart LR
     D[("`**D.npy**
     VPR distances`")] --> CMP
 
+    click GTM "#colmap_gt_modelpy"
     click CIK "#colmap_information_kernelpy"
     click KD "#colmap_kernel_demopy"
     click CMP "#compare_kernelspy"
@@ -47,12 +52,13 @@ flowchart LR
     classDef step fill:#b5f3f9,stroke:#7fcfd8,stroke-width:2px,color:#1b2a4a
     classDef store fill:#fff,stroke:#a59ddf,stroke-width:2px,color:#1b2a4a
 
-    class CIK,KD,CMP step
-    class MODEL,RGB,OUT,SEL,D store
+    class GTM,CIK,KD,CMP step
+    class DB,MODEL,RGB,OUT,SEL,D store
     linkStyle default stroke-width:2px
 ```
 
 ```bash
+pixi run colmap-gt-model <database.db> --sequence <sequence>                 # a ground-truth model (synthetic sequences)
 pixi run colmap-kernel <model_dir> --rgb-csv <sequence>/rgb.csv            # the kernel alone
 pixi run colmap-demo <model_dir> --rgb-csv <sequence>/rgb.csv [--tau 0.9]   # kernel -> cull -> surviving rgb.csv, checked
 pixi run compare-kernels <D.npy> <colmap_kernel_dir> [--centred]            # VPR vs COLMAP
@@ -72,7 +78,7 @@ $$
 $G_i$ is image $i$'s own information gain, so $K_{ij}$ is the fraction of each image's gain the pair shares, the normalised mutual information. Data processing gives $I_{ij} \le \min(G_i, G_j)$, so $K \in [0, 1]$ with unit diagonal; PSD is not guaranteed. Every log-determinant is a Schur complement of the independent 3×3 point blocks onto the pose block: a pair only needs its shared points, once each image's own reduction is known.
 
 !!! warning "Tau lives on another scale"
-    An image's unique information on this kernel is typically 0.54–0.90, since most of its gain is points and pose no other image shares, so tau ≈ 0.3 culls nothing. The useful range is about 0.7–0.95 (on a 53-image model, tau 0.9 kept 16 images centred, 19 raw); see [`2026-09-25_kernels.md`](../notes/2026-09-25_kernels.md).
+    An image's unique information on this kernel is typically 0.54–0.90, since most of its gain is points and pose no other image shares, so tau ≈ 0.3 culls nothing. The useful range is about 0.7–0.95 (on a 53-image model, tau 0.9 kept 16 images centred, 19 raw; measured on 2026-09-07 with the original per-pair code, before the prior-term bug below existed); see [`2026-09-25_kernels.md`](../notes/2026-09-25_kernels.md).
 
 ## `colmap_information_kernel.py`
 
@@ -135,10 +141,13 @@ def pairwise_mutual_information(infos: list, lambda_p: float, chunk_incidences: 
 $I_{ij}$ for every pair of images that share a point, batched over all pairs at once. With the single-image reductions in hand, a pair needs only its shared points:
 
 $$
-I_{ab} = \tfrac12\Big[\log\det A_a + \log\det A_b - \log\det S_{ab} - \sum_{k \in a \cap b}\big(\log\det P_k^{ab} - \log\det P_k^{a} - \log\det P_k^{b} - 3\log\lambda_p\big)\Big]
+I_{ab} = \tfrac12\Big[\log\det A_a + \log\det A_b - \log\det S_{ab} - \sum_{k \in a \cap b}\big(\log\det P_k^{ab} - \log\det P_k^{a} - \log\det P_k^{b} + 3\log\lambda_p\big)\Big]
 $$
 
 where $S_{ab}$ (12×12) puts the shared points' single-image Schur terms back into $\operatorname{blockdiag}(A_a, A_b)$ and removes the joint ones, $P_k^{ab} = \lambda_p I + J_p^{a\top} J_p^a + J_p^{b\top} J_p^b$. Every image-point incidence gets a row in stacked arrays; incidences are sorted by point, the image pairs of every track enumerated with triangular indices (vectorised per track length), sorted by pair, and processed in chunks of at most `chunk_incidences` rows with batched einsums and segment sums. Returns the matrix $I$, with $G_i$ on the diagonal and 0 for pairs that share nothing, and the number of overlapping pairs; `progress(done, total)` is called after each chunk.
+
+!!! warning "Fixed on 2026-09-30: the sign of the prior term"
+    From 2026-09-10 (`7d39dc4`, when this batched version replaced the original per-pair loop) until the fix, the code (and this formula) had $-3\log\lambda_p$ per shared point, so every $I_{ij}$ was off by $3\,|a \cap b|\log\lambda_p$ nats, zero only when $\sigma_{\text{point}} = 1$. The ground-truth REPLICA model ($\sigma_{\text{point}} = 1.78$ m) exposed it, and the dense formula sided with the single-pair reduction. On ETH `table_3` the fix moves $K$ by up to 0.12 (mean 0.013), the consecutive-frame median from 0.39 to 0.50, and removes the 16 negative entries; kernels built between 2026-09-10 and the fix should be rebuilt.
 
 !!! info "Cost"
     **Time O(Σ over tracks of L(L−1)/2), space ~30 B per pair-point incidence plus ~200 B per incidence of the current chunk**
@@ -184,6 +193,44 @@ Runs [`colmap_information_kernel.py`](#kernel-main) (unless `--skip-kernel` and 
 
 !!! info "Cost"
     **The kernel's cost, plus one `kernel_demo` cull** (O(n³) for the inverse and the PSD check, n registered images).
+
+## `colmap_gt_model.py`
+
+A COLMAP text model built from a COLMAP database's verified matches and the ground truth of a synthetic VSLAM-LAB sequence (`pixi run colmap-gt-model`), in place of COLMAP's own reconstruction: the kernel is then computed on the true poses and points instead of COLMAP's estimate of them, over every image the matcher saw. It needs an RGB-D sequence with ground-truth poses, such as REPLICA.
+
+### `main` {#gt-main data-toc-label="main"}
+
+```text
+colmap_gt_model.py <colmap_database.db> --sequence <VSLAM-LAB-Benchmark/<DATASET>/<sequence>>
+    [--out dir] [--max-reproj 2.0] [--max-depth-rel 0.02] [--pixel-offset auto|0|0.5]
+```
+
+Reads the database's images, keypoints, camera and verified inlier matches (`read_database`; COLMAP's WATERMARK pairs are excluded), the sequence's `rgb.csv`, `groundtruth.csv` and `calibration.yaml` (`read_sequence`, `read_calibration`), and one depth image per database image, matched by file name. Every keypoint is back-projected with its ground-truth z-depth (the PNG value over `depth_factor`, at the nearest pixel) and its image's pose, `groundtruth.csv` being world-from-camera (TUM) and converted to COLMAP's camera-from-world.
+
+Then, in order:
+
+1. **Conventions.** On 200,000 sampled matches, the median transfer error (a keypoint's back-projection reprojected into the matching image) is measured for each `--pixel-offset` candidate; `auto` keeps the better of 0 and 0.5. Above `--max-reproj` the pose convention or the depth type is wrong, and nothing is written.
+2. **Matches.** A verified match is kept only when the ground truth confirms it: every side with a depth transfers into the other within `--max-reproj`. This has to happen before the tracks are joined: a few false matches otherwise chain unrelated tracks into giant ones, and their median point fits none of them.
+3. **Tracks and points.** `connected_components` joins the confirmed matches into tracks; a track's point is the median of its depth-backed back-projections (`group_median`). An observation is dropped when it reprojects more than `--max-reproj` px from the point, or its depth disagrees by more than `--max-depth-rel` (two passes); of two keypoints of one image in a track the one closer to the point is kept; a track needs two surviving observations in different images.
+4. **Output.** `cameras.txt` (the database's camera), `images.txt` (the ground-truth poses and every keypoint, −1 for those not in a track) and `points3D.txt` in `--out`, by default `<database_dir>/gt_model`, ready for [`colmap_information_kernel.py`](#kernel-main).
+
+It prints the transfer error for each offset, the confirmed matches, the tracks, what each filter removed, the reprojection error of the kept observations and the track lengths. On REPLICA `office0` (400 images, 7.7 M verified matches): offset 0 fits at 0.33 px against 0.45 px for 0.5, 89.5 % of the matches are confirmed, and 22,060 points remain with a median reprojection error of 0.23 px (p95 1.25 px) and a median track length of 5.
+
+```bash
+pixi run colmap-gt-model <eval>/REPLICA/office0/colmap_00000/colmap_database.db \
+    --sequence <benchmark>/REPLICA/office0 --out <eval>/REPLICA/office0/gt_model
+pixi run colmap-kernel <eval>/REPLICA/office0/gt_model --rgb-csv <benchmark>/REPLICA/office0/rgb.csv \
+    --out <eval>/REPLICA/office0/gt_kernel
+```
+
+!!! note "The pixel convention"
+    COLMAP places pixel centres at +0.5, so an offset of 0.5 would be expected against a calibration with integer centres; on REPLICA an offset of 0 fits better, hence `auto`.
+
+!!! warning "The kernel tool's dense check"
+    `colmap_information_kernel.py --check` does not finish in reasonable time on this model: the dense system of a pair covers every point of both images, thousands of dimensions with these long tracks. Check a few pairs against `pair_logdet` instead.
+
+!!! info "Cost"
+    **Time O(matches + keypoints), about 10 s on REPLICA `office0`; memory ~3.3 GB** there, dominated by the 7.7 M match arrays.
 
 ## `compare_kernels.py`
 
