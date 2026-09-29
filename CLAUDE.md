@@ -111,6 +111,8 @@ Always compiled in, runtime switches, no compile-time kill flags; the Logger is 
 
 ### Offline tools (`tools/`, numpy + matplotlib only)
 
+The three COLMAP tools are documented function by function on `docs/reference/colmap_tools.md`.
+
 - `colmap_information_kernel.py <model_dir> --rgb-csv <csv>` — the pairwise shared-information kernel of a COLMAP reconstruction (normalised mutual information of the joint bundle-adjustment problem; own `.bin`/`.txt` reader, no pycolmap in any env) → `kernel.npy`, `mutual_information.npy`, `ids.csv`, consumed by `kernel_demo --kind similarity --ids`. Ids are data-row indices of the rgb csv matched by image name; unregistered images get no row. **Its tau lives on a different scale** than the MegaLoc kernel (useful range ≈ 0.7–0.95, see `docs/notes/2026-09-25_kernels.md`).
 - `colmap_kernel_demo.py` — the chained kernel → cull → survivors' `rgb.csv` run with checks (`colmap-demo`).
 - `compare_kernels.py <D.npy> <colmap_kernel_dir>` — VPR vs COLMAP kernel heatmaps, difference, scatter, Pearson/Spearman.
