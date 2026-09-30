@@ -234,18 +234,28 @@ pixi run colmap-kernel <eval>/REPLICA/office0/gt_model --rgb-csv <benchmark>/REP
 
 ## `compare_kernels.py`
 
-The appearance kernel against the geometric one over the same images (`pixi run compare-kernels`).
+Any number of kernels over the same images, every pair compared (`pixi run compare-kernels`): the appearance kernel against the geometric one, the ground-truth kernel against COLMAP's, raw against centred, and so on.
 
 ### `main` {#compare-main data-toc-label="main"}
 
 ```text
-compare_kernels.py <D.npy> <colmap_kernel_dir> [--kind squared-euclidean] [--out fig.png]
-                   [--centred] [--no-normalise] [--show]
+compare_kernels.py <input> <input> [<input> ...] [--kind squared-euclidean] [--labels A B ...]
+                   [--centred] [--no-normalise] [--out dir] [--show]
 ```
 
-Loads the COLMAP kernel and its ids with `load_ids`, and restricts the VPR matrix to the same `rgb.csv` rows (both are indexed by them), converted with `similarity_from_distance` and symmetrised, since the rotation-min matrix is not symmetric. Both are ordered by frame id, optionally double-centred (`--centred`, what the culler marginalises), and min-max normalised to $[0, 1]$ over their off-diagonal entries unless `--no-normalise`, since the VPR cosine has a ~0.37 floor and the information kernel lives in 0–0.6. Prints both ranges, the Pearson and Spearman correlations of the paired off-diagonal entries, the mean and largest difference and the five most disagreeing pairs; saves a figure with both heatmaps, their difference and a scatter of the paired entries to `--out`, by default `<colmap_kernel_dir>/compare_kernels[_centred].png`.
+An input is a kernel folder (`kernel.npy` + `ids.csv` from [`colmap_information_kernel.py`](#kernel-main), row i being the image whose `rgb.csv` row is its `external_id`) or a `.npy` matrix over the sequence's `rgb.csv` rows, such as VPR-LAB's `D.npy`, read as `--kind` or as `path::kind` for that input. `load_input` reads each; `restrict` takes every kernel over the images common to **all** inputs, in frame-id order, symmetrised (the rotation-min matrix is not symmetric) with a unit diagonal. Each is then optionally double-centred (`--centred`, what the culler marginalises) and, unless `--no-normalise`, min-max normalised to $[0, 1]$ over its off-diagonal entries, since the VPR cosine has a ~0.37 floor and the information kernel lives in 0–0.6.
+
+For every pair, `pair_stats` gives the Pearson and Spearman correlations of the paired off-diagonal entries, the mean, mean absolute and largest difference, and the five most disagreeing frame pairs; with three or more inputs, the N × N Pearson and Spearman matrices follow. `pairs[_centred].csv` holds one row per pair, and `compare_kernels[_centred].png` an N × N grid: each kernel's heatmap on the diagonal, the difference heatmaps (row − column, one diverging scale for all) below it, and the scatter of paired entries above it. `--out` defaults to the first kernel folder among the inputs, else the current directory; `--labels` replaces the folder and file names. The original two-input call, `compare_kernels.py <D.npy> <colmap_kernel_dir>`, prints the same statistics as before.
 
 `similarity_from_distance` accepts the same kinds as placecell's `kernel_io` (`similarity`, `squared-euclidean`, `cosine-distance`, `euclidean`, plus the aliases `faiss` and `cosine`); `centre` is the formula of [`PlaceCell::centre_kernel`](placecell.md#centre_kernel) over every row, with no usable-row filter; `normalise` is the min-max scaling with the diagonal kept at 1.
 
+```bash
+pixi run compare-kernels <benchmark>/REPLICA/office0/vpr-lab/D.npy <eval>/REPLICA/office0/gt_kernel \
+    <eval>/REPLICA/office0/information_kernel --labels vpr ground-truth colmap
+```
+
+!!! note "Ground truth against COLMAP on REPLICA"
+    On `office0` (399 common images) the ground-truth kernel and COLMAP's agree almost exactly: Pearson 0.999, Spearman 0.973, mean |difference| 0.005 after normalisation. The kernel built by the tool before the prior-term fix is anti-correlated with both (Pearson −0.86).
+
 !!! info "Cost"
-    **Time O(n²), plus O(n²) for the figure; space O(N² + n²)**, with N the rows of `D.npy` and n the registered images.
+    **Time O(n²) per pair plus O(n²) per grid cell for the figure; space O(N² + n² per input)**, with N the rows of the largest matrix and n the common images.

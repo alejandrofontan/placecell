@@ -38,7 +38,7 @@ pixi run demo           # build/examples/synthetic_demo -> placecell_demo_out/ (
 pixi run kernel-demo <matrix.npy> [--kind K] [--tau T] [--clip] [--raw] [--out dir] [--rgb-csv f] [--ids f]
 pixi run colmap-kernel <model_dir> --rgb-csv <sequence>/rgb.csv [--out dir] [--check N]
 pixi run colmap-demo <model_dir> --rgb-csv <sequence>/rgb.csv [--tau 0.9] [--raw] [--skip-kernel]
-pixi run compare-kernels <D.npy> <colmap_kernel_dir> [--centred]
+pixi run compare-kernels <input> <input> [...] [--centred]   # kernel folders or D.npy[::kind], every pair
 pixi run plot           # tools/plot_placecell.py placecell_demo_out (matplotlib windows; --save for PNGs)
 pixi run python-smoke   # import the compiled _placecell module straight from build/python
 pixi run clean          # rm -rf build
@@ -115,7 +115,7 @@ The three COLMAP tools are documented function by function on `docs/reference/co
 
 - `colmap_information_kernel.py <model_dir> --rgb-csv <csv>` — the pairwise shared-information kernel of a COLMAP reconstruction (normalised mutual information of the joint bundle-adjustment problem; own `.bin`/`.txt` reader, no pycolmap in any env) → `kernel.npy`, `mutual_information.npy`, `ids.csv`, consumed by `kernel_demo --kind similarity --ids`. Ids are data-row indices of the rgb csv matched by image name; unregistered images get no row. **Its tau lives on a different scale** than the MegaLoc kernel (useful range ≈ 0.7–0.95, see `docs/notes/2026-09-25_kernels.md`).
 - `colmap_kernel_demo.py` — the chained kernel → cull → survivors' `rgb.csv` run with checks (`colmap-demo`).
-- `compare_kernels.py <D.npy> <colmap_kernel_dir>` — VPR vs COLMAP kernel heatmaps, difference, scatter, Pearson/Spearman.
+- `compare_kernels.py <input> <input> [...]` — any number of kernels (kernel folders, or `D.npy[::kind]` over rgb.csv rows) over the images common to all: an N × N grid (heatmaps, differences, scatters), Pearson/Spearman for every pair, `pairs.csv`.
 - `plot_placecell.py <dump_dir>` — plots of a `PlaceCell::dump` directory.
 
 ### How AllFeature-VSLAM consumes this
