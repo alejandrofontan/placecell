@@ -6,6 +6,49 @@ version = "0.1.0"
 platforms = [
     { name = "linux-64-cuda", platform = "linux-64", cuda = "12.0" },
 ]
+preview = ["pixi-build"]
+
+# One package build per Python version
+[workspace.build-variants]
+python = ["3.11.*", "3.12.*", "3.13.*"]
+
+########################################################################################################################
+# Package: the `placecell` Python module (nanobind bindings of the C++ core), published to
+# https://prefix.dev/vslamlab/vslamlab by CI on vX.Y.Z tags (.github/workflows/conda-package.yml).
+#   pixi publish --clean --target-dir output
+# Built through pyproject.toml (scikit-build-core): PLACECELL_BUILD_PYTHON=ON, no examples, no MegaLoc/viz.
+[package]
+name = "placecell"
+version = "0.1.0"
+description = "Keyframe lifecycle management for VSLAM and 3D reconstruction"
+authors = ["Alejandro Fontan"]
+license = "Apache-2.0"
+homepage = "https://github.com/alejandrofontan/placecell"
+repository = "https://github.com/alejandrofontan/placecell"
+
+[package.build]
+backend = { name = "pixi-build-python", version = "0.*" }
+
+[package.build.config]
+noarch = false        # compiled extension (_placecell)
+compilers = ["cxx"]
+installer = "pip"
+
+[package.build-dependencies]
+cmake = ">=3.18"
+ninja = "*"
+
+[package.host-dependencies]
+python = "*"
+pip = "*"
+scikit-build-core = ">=0.10"
+nanobind = ">=2.0"
+eigen = "*"
+
+[package.run-dependencies]
+python = "*"
+numpy = "*"           # nanobind's Eigen <-> NumPy conversion (similarity_from_distance, set_kernel)
+########################################################################################################################
 
 [tasks]
 configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_BUILD_PYTHON=ON"
