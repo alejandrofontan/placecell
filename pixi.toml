@@ -43,7 +43,7 @@ python = "*"
 pip = "*"
 scikit-build-core = ">=0.10"
 nanobind = ">=2.0"
-eigen = "*"
+eigen = "3.4.*"        # CMakeLists asks for Eigen3 3.3 (same major); conda-forge now defaults to Eigen 5
 
 [package.run-dependencies]
 python = "*"
