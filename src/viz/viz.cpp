@@ -327,7 +327,7 @@ cv::Mat render_information_history(const Recorder& recorder, const HistoryStyle&
             if(!decision.inserted || decision.query_index < first)
                 continue;
             insertions++;
-            const std::size_t qi = std::min(decision.query_index, queries.size() - 1);
+            const std::size_t qi = std::min<std::size_t>(decision.query_index, queries.size() - 1);
             const float v = std::isnan(decision.unexplained) ? queries[qi].unexplained : decision.unexplained;
             const cv::Point p(axes.x(double(decision.query_index)), axes.y(std::isnan(v) ? 0.0f : v));
             const std::vector<cv::Point> triangle{p + cv::Point(0, -7), p + cv::Point(-5, 2), p + cv::Point(5, 2)};
