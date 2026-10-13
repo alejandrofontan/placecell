@@ -9,13 +9,10 @@
 #include "megaloc_common.hpp"
 
 #include <cmath>
-#include <filesystem>
 #include <stdexcept>
 
 #include <opencv2/imgproc.hpp>
 #include <yaml-cpp/yaml.h>
-
-#include "placecell/log.h"
 
 namespace megaloc
 {
@@ -54,23 +51,6 @@ Sidecar loadSidecar(const std::string& yamlPath)
     if (s.inputWidth <= 0 || s.inputHeight <= 0 || s.descriptorDim <= 0)
         throw std::runtime_error("MegaLoc: sidecar " + yamlPath + " has a non-positive size");
     return s;
-}
-
-std::string resolveModelPath(const std::string& onnxPath, const std::string& precision)
-{
-    if (precision != "fp16")
-        return onnxPath;
-    const std::filesystem::path p(onnxPath);
-    const std::filesystem::path twin = p.parent_path() / (p.stem().string() + "_fp16.onnx");
-    std::error_code ec;
-    if (std::filesystem::exists(twin, ec))
-    {
-        PLACECELL_INFO("MegaLoc", "precision fp16: using " << twin.string());
-        return twin.string();
-    }
-    PLACECELL_WARN_ONCE("MegaLoc", "precision fp16 requested but " << twin.string()
-                        << " does not exist: using the fp32 file " << onnxPath);
-    return onnxPath;
 }
 
 void preprocess(const cv::Mat& imageBGR, const Sidecar& sidecar, std::vector<float>& out)

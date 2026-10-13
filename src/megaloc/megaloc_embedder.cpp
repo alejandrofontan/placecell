@@ -29,7 +29,7 @@ namespace placecell {
         megaloc::TensorRTMegaLoc engine;
 #else
         explicit Impl(const std::string& onnx_path, const Settings& s)
-            : engine(onnx_path, s.precision, s.provider, s.threads, s.coreml_compute_units),
+            : engine(onnx_path, s.provider, s.threads, s.coreml_compute_units),
               provider_name(engine.provider()) {}
         megaloc::OnnxRuntimeMegaLoc engine;
 #endif
@@ -48,7 +48,7 @@ namespace placecell {
         const Profiler::Stopwatch warmup;
         (void)impl_->engine.infer(cv::Mat::zeros(480, 640, CV_8UC3));
         PLACECELL_INFO("MegaLocEmbedder", backend() << " ready (" << (impl_->engine.loadedFromCache() ? "loaded" : "built")
-                       << ", provider " << impl_->provider_name << ", " << settings.precision << ", "
+                       << ", provider " << impl_->provider_name << ", " << impl_->engine.precision() << " weights, "
                        << impl_->engine.descriptorDim() << "-d, input " << impl_->engine.inputWidth() << "x"
                        << impl_->engine.inputHeight() << "): " << impl_->engine.enginePath() << "; warmup "
                        << warmup.ms() << " ms");
@@ -97,6 +97,11 @@ namespace placecell {
     const std::string& MegaLocEmbedder::provider() const
     {
         return impl_->provider_name;
+    }
+
+    const std::string& MegaLocEmbedder::precision() const
+    {
+        return impl_->engine.precision();
     }
 
     bool MegaLocEmbedder::loaded_from_cache() const

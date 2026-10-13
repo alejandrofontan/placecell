@@ -14,10 +14,12 @@
  * pointer, so this header needs neither ONNX Runtime, TensorRT nor CUDA.
  *
  * Contracts:
- * - Settings select the model file by precision ("fp16" uses '<stem>_fp16.onnx' next
- *   to the given ONNX when it exists), the execution provider (ONNX Runtime:
- *   auto | cuda | coreml | cpu; TensorRT ignores it) and the CPU thread budget. A
- *   provider that is not available falls back with a warning, never a failure.
+ * - The model file is loaded as given; its weight precision is a property of the file
+ *   (the export writes an fp32 file and an '_fp16' twin, both with float32 I/O; the
+ *   sidecar says which it is). Settings select the execution provider (ONNX Runtime:
+ *   auto | cuda | coreml | cpu) and the CPU thread budget; `precision` is only read
+ *   by the TensorRT backend, which builds its engine at that precision. A provider
+ *   that is not available falls back with a warning, never a failure.
  * - Construction is the slow path: ONNX Runtime creates the session (seconds; a
  *   minute for CoreML's first compile, cached next to the model), TensorRT builds or
  *   loads its engine ('<onnx>.<precision>.engine', 1-2 min on first use). The
@@ -49,7 +51,7 @@ class MegaLocEmbedder {
     public:
         struct Settings
         {
-            std::string precision{"fp16"};          // "fp32" | "fp16" (model file choice; TensorRT: engine precision)
+            std::string precision{"fp16"};          // TensorRT backend only: engine precision "fp16" | "fp32" (ONNX Runtime: the file decides)
             std::string provider{"auto"};           // ONNX Runtime: "auto" | "cuda" | "coreml" | "cpu"
             int threads{4};                         // ONNX Runtime: intra-op threads of the CPU provider (>= 1)
             std::string coreml_compute_units{"ALL"}; // CoreML: "ALL" | "CPUAndGPU" | "CPUAndNeuralEngine" | "CPUOnly"
@@ -72,6 +74,8 @@ class MegaLocEmbedder {
         static const char* backend();
         // The provider that runs the graph: ONNX Runtime "cuda" | "coreml" | "cpu"; TensorRT "tensorrt"
         const std::string& provider() const;
+        // Weight precision of what runs: the loaded file's (ONNX Runtime, from its sidecar) or the engine's (TensorRT)
+        const std::string& precision() const;
         // True if the engine came from the cache file, false if it was built now
         // (ONNX Runtime: always true, the model file is the artefact)
         bool loaded_from_cache() const;

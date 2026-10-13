@@ -79,6 +79,8 @@ class TensorRTMegaLoc
     const std::string& enginePath() const { return enginePath_; }
     /** This backend has no provider choice. */
     const std::string& provider() const { return provider_; }
+    /** The engine precision this instance was built with ("fp16" | "fp32"). */
+    const std::string& precision() const { return precision_; }
     int descriptorDim() const { return sidecar_.descriptorDim; }
     int inputWidth() const { return sidecar_.inputWidth; }
     int inputHeight() const { return sidecar_.inputHeight; }

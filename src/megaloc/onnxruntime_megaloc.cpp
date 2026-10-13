@@ -60,17 +60,14 @@ std::string shapeToString(const std::vector<int64_t>& shape)
 }
 } // namespace
 
-OnnxRuntimeMegaLoc::OnnxRuntimeMegaLoc(const std::string& onnxPath, const std::string& precision,
-                                       const std::string& provider, int threads,
+OnnxRuntimeMegaLoc::OnnxRuntimeMegaLoc(const std::string& onnxPath, const std::string& provider, int threads,
                                        const std::string& coremlComputeUnits,
                                        const std::string& sidecarYamlPath)
-    : modelPath_(resolveModelPath(onnxPath, precision)),
+    : modelPath_(onnxPath),
       sidecar_(loadSidecar(sidecarYamlPath.empty() ? modelPath_ + ".yaml" : sidecarYamlPath)),
       env_(ORT_LOGGING_LEVEL_WARNING, "placecell", &ortLog, nullptr),
       memoryInfo_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault))
 {
-    if (precision != "fp16" && precision != "fp32")
-        throw std::runtime_error("OnnxRuntimeMegaLoc: precision must be fp16 or fp32, got " + precision);
     if (threads < 1)
         throw std::runtime_error("OnnxRuntimeMegaLoc: threads must be >= 1");
 
@@ -83,8 +80,8 @@ OnnxRuntimeMegaLoc::OnnxRuntimeMegaLoc(const std::string& onnxPath, const std::s
     options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     provider_ = appendProviders(options_, provider, coremlComputeUnits);
 
-    PLACECELL_INFO("OnnxRuntimeMegaLoc", "creating session for " << modelPath_ << " (provider " << provider_
-                   << ", " << threads << " threads)...");
+    PLACECELL_INFO("OnnxRuntimeMegaLoc", "creating session for " << modelPath_ << " (" << sidecar_.precision
+                   << " weights, provider " << provider_ << ", " << threads << " threads)...");
     try
     {
         session_ = std::make_unique<Ort::Session>(env_, modelPath_.c_str(), options_);

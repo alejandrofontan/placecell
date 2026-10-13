@@ -41,10 +41,6 @@ struct Sidecar
 /** Parse the sidecar; throws std::runtime_error with the path on any problem. */
 Sidecar loadSidecar(const std::string& yamlPath);
 
-/** The model file for a requested precision: 'fp16' picks '<stem>_fp16.onnx' next to
- *  `onnxPath` when it exists (logs which file is used), otherwise the given path. */
-std::string resolveModelPath(const std::string& onnxPath, const std::string& precision);
-
 /** Image -> normalised CHW float planar input ([1,3,H,W], R plane first). Must match
  *  preprocess_cv2() in tools/export_megaloc.py: 1/4-channel inputs are converted to
  *  3-channel BGR, area-interpolated resize to the sidecar size, /255, (x-mean)/std.

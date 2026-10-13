@@ -22,10 +22,12 @@
  * runs. Unlike TensorRT there is no engine build: session creation takes seconds (CPU,
  * CUDA) to a minute (CoreML's first compile), and nothing is GPU-specific on disk.
  *
- * Precision is a file choice: "fp16" uses '<stem>_fp16.onnx' next to the given ONNX
- * when it exists (weights in half precision, I/O still float32), "fp32" the file as
- * given. The sidecar '<model>.onnx.yaml' supplies input size, normalisation, tensor
- * names and descriptor dim (megaloc_common.hpp).
+ * The model file is loaded as given: precision is a property of the file (the export
+ * writes 'megaloc_322x322.onnx' in fp32 and the twin 'megaloc_322x322_fp16.onnx' with
+ * fp16 weights, I/O float32 in both), read back from the sidecar '<model>.onnx.yaml',
+ * which also supplies input size, normalisation, tensor names and descriptor dim
+ * (megaloc_common.hpp). The fp16 file is the one for CUDA / Core ML, the fp32 file the
+ * faster one on the CPU provider.
  */
 #ifndef PLACECELL_ONNXRUNTIME_MEGALOC_HPP
 #define PLACECELL_ONNXRUNTIME_MEGALOC_HPP
@@ -47,18 +49,16 @@ class OnnxRuntimeMegaLoc
   public:
     /**
      * Create the session for an exported MegaLoc ONNX.
-     * @param onnxPath   model from tools/export_megaloc.py (the fp32 file; fp16 is resolved from it)
-     * @param precision  "fp32" | "fp16" (file choice, see above)
+     * @param onnxPath   the model file to load (fp32 export or its fp16 twin, see above)
      * @param provider   "auto" | "cuda" | "coreml" | "cpu"
      * @param threads    intra-op threads of the CPU provider (also the fallback nodes); >= 1
      * @param coremlComputeUnits  "ALL" | "CPUAndGPU" | "CPUAndNeuralEngine" | "CPUOnly" (CoreML only)
-     * @param sidecarYamlPath sidecar path; empty -> '<resolved model>.yaml'
+     * @param sidecarYamlPath sidecar path; empty -> '<onnxPath>.yaml'
      * @throws std::runtime_error on any unrecoverable setup failure
      */
-    OnnxRuntimeMegaLoc(const std::string& onnxPath, const std::string& precision = "fp16",
-                       const std::string& provider = "auto", int threads = 4,
-                       const std::string& coremlComputeUnits = "ALL",
-                       const std::string& sidecarYamlPath = "");
+    explicit OnnxRuntimeMegaLoc(const std::string& onnxPath, const std::string& provider = "auto",
+                                int threads = 4, const std::string& coremlComputeUnits = "ALL",
+                                const std::string& sidecarYamlPath = "");
     ~OnnxRuntimeMegaLoc();
 
     OnnxRuntimeMegaLoc(const OnnxRuntimeMegaLoc&) = delete;
@@ -77,6 +77,8 @@ class OnnxRuntimeMegaLoc
 
     /** The provider the session got: "cuda", "coreml" or "cpu". */
     const std::string& provider() const { return provider_; }
+    /** The loaded file's weight precision, from its sidecar ("fp32" | "fp16"). */
+    const std::string& precision() const { return sidecar_.precision; }
     /** The model file actually loaded (the fp16 twin when precision asked for it). */
     const std::string& enginePath() const { return modelPath_; }
     /** No engine cache in this backend: always true (the model file is the artefact). */

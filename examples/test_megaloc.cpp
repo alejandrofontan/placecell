@@ -17,9 +17,10 @@
  * expect >= 0.9999 between fp32 providers, >= 0.999 against fp16 ones).
  *
  * Usage:
- *   megaloc_test <model.onnx> <image> [<image> ...] [--precision fp32|fp16]
- *                [--provider auto|cuda|coreml|cpu] [--threads N] [--coreml-units U]
- *                [--reference <file>] [--dump <file>] [--iters N]
+ *   megaloc_test <model.onnx> <image> [<image> ...] [--provider auto|cuda|coreml|cpu]
+ *                [--threads N] [--coreml-units U] [--reference <file>] [--dump <file>] [--iters N]
+ *   (<model.onnx> is loaded as given: the fp32 export or its '_fp16' twin; on the TensorRT
+ *   backend --precision fp32|fp16 selects the engine precision)
  */
 
 #include <algorithm>
@@ -83,15 +84,14 @@ int main(int argc, char** argv)
 {
     if (argc < 3)
     {
-        std::printf("usage: %s <model.onnx> <image> [<image> ...] [--precision fp32|fp16] "
-                    "[--provider auto|cuda|coreml|cpu] [--threads N] [--coreml-units U] "
-                    "[--reference <file>] [--dump <file>] [--iters N]\n",
+        std::printf("usage: %s <model.onnx> <image> [<image> ...] [--provider auto|cuda|coreml|cpu] "
+                    "[--threads N] [--coreml-units U] [--reference <file>] [--dump <file>] [--iters N] "
+                    "[--precision fp32|fp16 (TensorRT engine only)]\n",
                     argv[0]);
         return 1;
     }
     const std::string onnxPath = argv[1];
     placecell::MegaLocEmbedder::Settings settings;
-    settings.precision = "fp32";
     std::string referencePath, dumpPath;
     int iters = 50;
     std::vector<std::string> images;
@@ -118,7 +118,7 @@ int main(int argc, char** argv)
     auto t0 = std::chrono::steady_clock::now();
     placecell::MegaLocEmbedder embedder(onnxPath, settings);
     const std::string label = std::string(placecell::MegaLocEmbedder::backend()) + "/" + embedder.provider() + " " +
-                              settings.precision;
+                              embedder.precision();
     std::printf("%s ready in %.0f ms (%s, %d-d): %s\n", label.c_str(), msSince(t0),
                 embedder.loaded_from_cache() ? "loaded" : "built", embedder.descriptor_dim(),
                 embedder.engine_path().c_str());

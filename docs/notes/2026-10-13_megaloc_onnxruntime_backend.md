@@ -12,13 +12,16 @@
 ## Harness
 
 `examples/test_megaloc.cpp` now goes through the public `MegaLocEmbedder` API (any backend) and takes
-`--provider auto|cuda|coreml|cpu`, `--precision fp32|fp16`, `--threads N`, `--coreml-units U`, `--reference <file>`,
-`--dump <file>`, `--iters N`. A dump has the reference file's format, so a run on one provider / machine is the
-reference of another:
+`--provider auto|cuda|coreml|cpu`, `--threads N`, `--coreml-units U`, `--reference <file>`, `--dump <file>`,
+`--iters N` (`--precision` only matters to the TensorRT backend's engine). The model file is loaded as given: the
+fp32 export or its `_fp16` twin — precision is a property of the file, read from its sidecar, not a switch (the
+`_fp16` substitution that existed for one afternoon was removed after review: one key, one file). A dump has the
+reference file's format, so a run on one provider / machine is the reference of another:
 
 ```bash
 pixi run -e megaloc-onnx megaloc-test megaloc_models/megaloc_322x322.onnx <4 table_3 frames> \
-    --provider cuda --precision fp32 --reference megaloc_models/megaloc_322x322_reference.txt --dump cuda_fp32.txt
+    --provider cuda --reference megaloc_models/megaloc_322x322_reference.txt --dump cuda_fp32.txt
+pixi run -e megaloc-onnx megaloc-test megaloc_models/megaloc_322x322_fp16.onnx <4 table_3 frames> --provider cuda ...
 ```
 
 ## Results (Linux: RTX 4000 Ada, CUDA 12.9; CPU runs with 4 intra-op threads)
