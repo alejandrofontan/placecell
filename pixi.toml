@@ -162,7 +162,7 @@ megaloc-smoke-onnx = { cmd = "./build-onnx/examples/megaloc_embedder_smoke", dep
 cxx-compiler = "*"
 cmake = "*"
 ninja = "*"
-eigen = "*"
+eigen = "3.4.*"   # find_package(Eigen3 3.3) rejects Eigen 5 (major version), and AllFeature's g2o needs 3.4 anyway
 opencv = "4.12.*"
 yaml-cpp = "*"
 onnxruntime-cpp = "1.31.*"

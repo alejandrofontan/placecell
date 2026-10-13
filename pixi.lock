@@ -1136,7 +1136,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-64/dav1d-1.2.1-hd590300_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/dbus-1.16.2-he8c428d_2.conda
       - conda: https://prefix.dev/conda-forge/linux-64/double-conversion-3.4.0-hecca717_0.conda
-      - conda: https://prefix.dev/conda-forge/linux-64/eigen-5.0.1-h19c2612_3.conda
+      - conda: https://prefix.dev/conda-forge/linux-64/eigen-3.4.0-h54a6638_2.conda
       - conda: https://prefix.dev/conda-forge/linux-64/ffmpeg-8.0.1-gpl_hac7f63c_111.conda
       - conda: https://prefix.dev/conda-forge/linux-64/fontconfig-2.18.3-h4db4eae_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/freeglut-3.2.2-h215f996_4.conda
@@ -1413,7 +1413,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/osx-arm64/dav1d-1.2.1-hb547adb_0.conda
       - conda: https://prefix.dev/conda-forge/osx-arm64/dbus-1.16.2-hf049998_2.conda
       - conda: https://prefix.dev/conda-forge/osx-arm64/double-conversion-3.4.0-hf6b4638_0.conda
-      - conda: https://prefix.dev/conda-forge/osx-arm64/eigen-5.0.1-hdb59ae0_3.conda
+      - conda: https://prefix.dev/conda-forge/osx-arm64/eigen-3.4.0-h784d473_2.conda
       - conda: https://prefix.dev/conda-forge/osx-arm64/ffmpeg-8.0.1-gpl_hc3c6940_112.conda
       - conda: https://prefix.dev/conda-forge/osx-arm64/fontconfig-2.18.3-h81aa574_1.conda
       - conda: https://prefix.dev/conda-forge/osx-arm64/freetype-2.14.3-hce30654_2.conda
@@ -2458,6 +2458,18 @@ packages:
     - double-conversion >=3.4.0,<3.5.0a0
   size: 71809
   timestamp: 1765193127016
+- conda: https://prefix.dev/conda-forge/linux-64/eigen-3.4.0-h54a6638_2.conda
+  sha256: a627704a4dc57459dbcdec8296c3f7f1801e53d441b7cadb56a2caa57920a5b3
+  md5: 00f77958419a22c6a41568c6decd4719
+  depends:
+  - libstdcxx >=14
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  license: MPL-2.0
+  license_family: MOZILLA
+  run_exports: {}
+  size: 1173190
+  timestamp: 1771922274213
 - conda: https://prefix.dev/conda-forge/linux-64/eigen-5.0.1-h19c2612_1.conda
   sha256: faccfc13d5e2af4fd03ab585221a8c4915f2954d60a321f8953b8b730e2e3c2d
   md5: 329251b710717ddee4f83198f450362b
@@ -2466,14 +2478,6 @@ packages:
   run_exports: {}
   size: 1311668
   timestamp: 1788180248648
-- conda: https://prefix.dev/conda-forge/linux-64/eigen-5.0.1-h19c2612_3.conda
-  sha256: e134dba3ad3523573d5902ff1222a4033372089ea31efa99e6adaf0aa18f904a
-  md5: cf1f7131e9055f06f07a834091f44ca4
-  license: MPL-2.0
-  license_family: MOZILLA
-  run_exports: {}
-  size: 1311719
-  timestamp: 1788951264833
 - conda: https://prefix.dev/conda-forge/linux-64/ffmpeg-8.0.1-gpl_h31206f3_108.conda
   sha256: afd4b5f5bc65769f957278ed4bfbca5f37576bae0c3fb94c2ff8e9b73ad945ba
   md5: e89c891870123ec75e4bc6454534e43e
@@ -10276,6 +10280,17 @@ packages:
     - double-conversion >=3.4.0,<3.5.0a0
   size: 64561
   timestamp: 1773480255077
+- conda: https://prefix.dev/conda-forge/osx-arm64/eigen-3.4.0-h784d473_2.conda
+  sha256: 26ada0ea43bb4415b192a424d67118066c6e2b050aa2e7aceba67d28a09ba180
+  md5: c31a869144b29f9b30d64e0265f78770
+  depends:
+  - __osx >=11.0
+  - libcxx >=19
+  license: MPL-2.0
+  license_family: MOZILLA
+  run_exports: {}
+  size: 1174811
+  timestamp: 1771922356511
 - conda: https://prefix.dev/conda-forge/osx-arm64/eigen-5.0.1-hdb59ae0_3.conda
   sha256: da0696b71ab191ea0d15feed3d96a21ec85da0633ba0aabd99ca509806f8ea78
   md5: 9fa281383911482a235dade061aecaee
