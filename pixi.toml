@@ -92,73 +92,33 @@ matplotlib = "*"
 
 [environments]
 default = []
-megaloc = { features = ["megaloc"], solve-group = "megaloc" }
-export-megaloc = { features = ["export-megaloc", "megaloc"], solve-group = "megaloc" }
-# ONNX Runtime backend (linux-64 with the CUDA provider, osx-arm64 with CoreML), no TensorRT / CUDA toolkit
-megaloc-onnx = { features = ["megaloc-onnx"], no-default-feature = true }
+# the MegaLoc embedder on ONNX Runtime + viz: linux-64 (CUDA provider) and osx-arm64 (CoreML + CPU)
+megaloc = { features = ["megaloc"], no-default-feature = true }
+# the model export (torch 2.10 CPU + onnx tooling), linux-64
+export-megaloc = { features = ["export-megaloc"] }
 docs = { features = ["docs"], no-default-feature = true }
 paper = { features = ["paper"], no-default-feature = true }
 
+# megaloc env = the MegaLoc embedder on ONNX Runtime + viz, what AllFeature-VSLAM uses on both platforms: CUDA
+# execution provider on linux-64 (the cuda129 build of onnxruntime-cpp, CUDA 12.9 like AllFeature's env), CoreML +
+# CPU on osx-arm64. No CUDA toolkit, no Python. Build dir build-megaloc/.
 [feature.megaloc]
-channels = ["https://repo.prefix.dev/spqr-tests"]
-platforms = ["linux-64-cuda"]
-
-[feature.megaloc.tasks]
-# The megaloc env carries OpenCV, so the viz module (heatmap / information plots) builds here too
-configure-megaloc = "cmake -S . -B build-megaloc -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_MEGALOC_BACKEND=tensorrt -DPLACECELL_WITH_VIZ=ON -DPLACECELL_BUILD_PYTHON=ON"
-demo-viz = { cmd = "./build-megaloc/examples/synthetic_demo placecell_demo_out --windows", depends-on = ["build-megaloc"] }
-# The published model files (ONNX + sidecar yamls) into megaloc_models/, per file and never overwriting:
-# a local tools/export_megaloc.py run produces the same names and must survive (`hf download --local-dir`
-# replaces them, and pixi's `outputs` check alone does not skip the task)
-download-models = "python tools/download_models.py"
-build-megaloc = { cmd = "cmake --build build-megaloc", depends-on = ["configure-megaloc", "download-models"] }
-megaloc-smoke = { cmd = "./build-megaloc/examples/megaloc_test", depends-on = ["build-megaloc"] }
-
-[feature.megaloc.dependencies]
-# CUDA Build Tools
-cuda-compiler = "*"
-cuda-version = "12.6.*"
-cuda-cudart-dev = "*"
-cuda-crt = "*"
-libcusparse-dev = "*"
-cuda-driver-dev = "*"
-cuda-nvcc = "*"
-cuda-nvrtc-dev = "*"
-cuda-nvtx = "*"
-cuda-nvtx-dev = "*"
-cuda-nvml-dev = "*"
-cuda-profiler-api = "*"
-
-# Tensor-RT Tools
-tensorrt-cxx = "*"
-tensorrt-cxx-builder = "*"
-tensorrt-cxx-full = "*"
-
-# 3D / geometry / eval / video
-opencv = "4.12.*"
-yaml-cpp = "*"
-
-# `hf download` for download-models
-huggingface_hub = "*"
-
-# megaloc-onnx env = the MegaLoc embedder on ONNX Runtime (PLACECELL_MEGALOC_BACKEND=onnxruntime), the
-# backend AllFeature-VSLAM uses on both platforms: CUDA execution provider on linux-64 (the cuda129 build
-# of onnxruntime-cpp, CUDA 12.9 like AllFeature's env), CoreML + CPU on osx-arm64. No TensorRT, no CUDA
-# toolkit, no Python. Build dir build-onnx/.
-[feature.megaloc-onnx]
 channels = ["https://prefix.dev/conda-forge"]
 
-[feature.megaloc-onnx.tasks]
-configure-onnx = "cmake -S . -B build-onnx -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_MEGALOC_BACKEND=onnxruntime -DPLACECELL_WITH_VIZ=ON -DPLACECELL_BUILD_PYTHON=OFF"
+[feature.megaloc.tasks]
+configure-megaloc = "cmake -S . -B build-megaloc -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_WITH_VIZ=ON -DPLACECELL_BUILD_PYTHON=OFF"
 # Per-file, never overwrites: a local export in megaloc_models/ (tools/export_megaloc.py) is kept as is
-download-models-onnx = "python tools/download_models.py"
-build-onnx = { cmd = "cmake --build build-onnx --parallel 3", depends-on = ["configure-onnx", "download-models-onnx"] }
-# pixi run -e megaloc-onnx megaloc-test megaloc_models/megaloc_322x322.onnx <img>... [--provider cuda|coreml|cpu]
-#   [--precision fp32|fp16] [--threads N] [--reference megaloc_models/megaloc_322x322_reference.txt] [--dump f] [--iters N]
-megaloc-test = { cmd = "./build-onnx/examples/megaloc_test", depends-on = ["build-onnx"] }
-megaloc-smoke-onnx = { cmd = "./build-onnx/examples/megaloc_embedder_smoke", depends-on = ["build-onnx"] }
+download-models = "python tools/download_models.py"
+build-megaloc = { cmd = "cmake --build build-megaloc --parallel 3", depends-on = ["configure-megaloc", "download-models"] }
+# pixi run -e megaloc megaloc-test megaloc_models/megaloc_322x322.onnx <img>... [--provider auto|cuda|coreml|cpu]
+#   [--threads N] [--coreml-units U] [--reference megaloc_models/megaloc_322x322_reference.txt] [--dump f] [--iters N]
+# (the fp16 twin: megaloc_models/megaloc_322x322_fp16.onnx)
+megaloc-test = { cmd = "./build-megaloc/examples/megaloc_test", depends-on = ["build-megaloc"] }
+megaloc-smoke = { cmd = "./build-megaloc/examples/megaloc_embedder_smoke", depends-on = ["build-megaloc"] }
+# synthetic_demo with the OpenCV windows (kernel / information / alive); this env's OpenCV has a GUI
+demo-viz = { cmd = "./build-megaloc/examples/synthetic_demo placecell_demo_out --windows", depends-on = ["build-megaloc"] }
 
-[feature.megaloc-onnx.dependencies]
+[feature.megaloc.dependencies]
 cxx-compiler = "*"
 cmake = "*"
 ninja = "*"
@@ -168,7 +128,7 @@ yaml-cpp = "*"
 onnxruntime-cpp = "1.31.*"
 huggingface_hub = "*"   # `hf download` for download-models-onnx
 
-[feature.megaloc-onnx.target.linux-64.dependencies]
+[feature.megaloc.target.linux-64.dependencies]
 onnxruntime-cpp = { version = "1.31.*", build = "*cuda129*" }   # CUDA execution provider, CUDA 12.9
 cuda-version = "12.9.*"
 cuda-cudart = "*"   # libcudart.so.12: dlopened by the CUDA provider at runtime, not a declared dependency of the package
@@ -178,9 +138,8 @@ cudnn = "*"
 platforms = ["linux-64-cuda"]
 
 [feature.export-megaloc.tasks]
-# Export the ONNX + sidecar, then publish them (requires `hf auth login`; creates the
-# repo on first use). Only *.onnx / *.yaml are uploaded -- never the .cache dir or the
-# machine-specific *.engine blobs.
+# Export the ONNX files (fp32 + fp16 twin) + sidecars, then publish them with the reference descriptors
+# (requires `hf auth login`). Never the .cache dir.
 # PYTHONNOUSERSITE: keep ~/.local/lib/pythonX.Y/site-packages out of the env (a stale user-site package there, e.g.
 # an empty `triton` folder, shadows the real module and breaks torch's import)
 export-models = { cmd = "python tools/export_megaloc.py", env = { PYTHONNOUSERSITE = "1" } }
@@ -189,8 +148,7 @@ upload-models = { cmd = "hf upload vslamlab/megaloc-models megaloc_models . --in
 [feature.export-megaloc.dependencies]
 # Torch libraries: >=2.9 for the matured torch.export-based ONNX exporter (dynamo=True, the default
 # exporter since 2.9; the TorchScript tracer is deprecated). The CPU build: the export traces and the
-# self-check run on the CPU anyway (a few minutes), and the GPU build of 2.9 needs cuda-version >=12.9,
-# which the TensorRT 10.3 packages of the shared `megaloc` solve group do not allow.
+# self-check run on the CPU anyway (a few minutes) and no CUDA packages are needed.
 pytorch-cpu = ">=2.9"
 torchvision = "*"
 
@@ -202,6 +160,7 @@ onnxconverter-common = "*"   # fp16-weights twin of the export (export_megaloc.p
 
 huggingface_hub = "*"
 safetensors = "*"            # load_file(model.safetensors): a direct import of export_megaloc.py
+opencv = "4.12.*"            # cv2: the C++-equivalent preprocessing of the self-check
 git = "*"
 numpy = "<2"
 

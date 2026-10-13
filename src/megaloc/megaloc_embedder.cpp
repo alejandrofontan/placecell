@@ -2,7 +2,7 @@
  * Module: placecell - megaloc_embedder.cpp
  * - Author: Alejandro Fontan Villacampa
  * - Assisted by: Claude (Fable 5)
- * - Version: 1.2
+ * - Version: 2.0
  * - Created: 2026-09-02
  * - Updated: 2026-10-13
  * - License: Apache-2.0
@@ -13,28 +13,16 @@
 #include <vector>
 
 #include "placecell/log.h"
-
-#if PLACECELL_MEGALOC_TENSORRT
-#include "tensorrt_megaloc.hpp"
-#else
 #include "onnxruntime_megaloc.hpp"
-#endif
 
 namespace placecell {
     struct MegaLocEmbedder::Impl
     {
-#if PLACECELL_MEGALOC_TENSORRT
         explicit Impl(const std::string& onnx_path, const Settings& s)
-            : engine(onnx_path, s.precision), provider_name("tensorrt") {}
-        megaloc::TensorRTMegaLoc engine;
-#else
-        explicit Impl(const std::string& onnx_path, const Settings& s)
-            : engine(onnx_path, s.provider, s.threads, s.coreml_compute_units),
-              provider_name(engine.provider()) {}
+            : engine(onnx_path, s.provider, s.threads, s.coreml_compute_units) {}
+
         megaloc::OnnxRuntimeMegaLoc engine;
-#endif
-        std::string provider_name;
-        std::mutex mutex;   // the backends are not thread-safe: one session / execution context
+        std::mutex mutex;   // the backend is not thread-safe: one session, one inference at a time
         Profiler profiler{"MegaLocEmbedder"};
     };
 
@@ -47,20 +35,14 @@ namespace placecell {
         // first real embed()
         const Profiler::Stopwatch warmup;
         (void)impl_->engine.infer(cv::Mat::zeros(480, 640, CV_8UC3));
-        PLACECELL_INFO("MegaLocEmbedder", backend() << " ready (" << (impl_->engine.loadedFromCache() ? "loaded" : "built")
-                       << ", provider " << impl_->provider_name << ", " << impl_->engine.precision() << " weights, "
-                       << impl_->engine.descriptorDim() << "-d, input " << impl_->engine.inputWidth() << "x"
-                       << impl_->engine.inputHeight() << "): " << impl_->engine.enginePath() << "; warmup "
-                       << warmup.ms() << " ms");
+        PLACECELL_INFO("MegaLocEmbedder", "ready (provider " << impl_->engine.provider() << ", "
+                       << impl_->engine.precision() << " weights, " << impl_->engine.descriptorDim() << "-d, input "
+                       << impl_->engine.inputWidth() << "x" << impl_->engine.inputHeight() << "): "
+                       << impl_->engine.modelPath() << "; warmup " << warmup.ms() << " ms");
     }
 
     MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path)
     : MegaLocEmbedder(onnx_path, Settings())
-    {
-    }
-
-    MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path, const std::string& precision)
-    : MegaLocEmbedder(onnx_path, Settings{precision, "auto", 4, "ALL"})
     {
     }
 
@@ -85,18 +67,9 @@ namespace placecell {
         return impl_->engine.descriptorDim();
     }
 
-    const char* MegaLocEmbedder::backend()
-    {
-#if PLACECELL_MEGALOC_TENSORRT
-        return "tensorrt";
-#else
-        return "onnxruntime";
-#endif
-    }
-
     const std::string& MegaLocEmbedder::provider() const
     {
-        return impl_->provider_name;
+        return impl_->engine.provider();
     }
 
     const std::string& MegaLocEmbedder::precision() const
@@ -104,14 +77,9 @@ namespace placecell {
         return impl_->engine.precision();
     }
 
-    bool MegaLocEmbedder::loaded_from_cache() const
+    const std::string& MegaLocEmbedder::model_path() const
     {
-        return impl_->engine.loadedFromCache();
-    }
-
-    const std::string& MegaLocEmbedder::engine_path() const
-    {
-        return impl_->engine.enginePath();
+        return impl_->engine.modelPath();
     }
 
     Profiler& MegaLocEmbedder::profiler()
@@ -127,8 +95,8 @@ namespace placecell {
     float MegaLocEmbedder::cosine(const Eigen::Ref<const Eigen::VectorXf>& a,
                                   const Eigen::Ref<const Eigen::VectorXf>& b)
     {
-        // Same semantics as the backends' cosine (parity for consumers migrating
-        // from the wrapper): double accumulation, 0 on empty or mismatched sizes
+        // Same semantics as megaloc::cosine (parity for consumers migrating from the
+        // backend): double accumulation, 0 on empty or mismatched sizes
         if(a.size() == 0 || a.size() != b.size())
             return 0.0f;
         const double dot = a.cast<double>().dot(b.cast<double>());

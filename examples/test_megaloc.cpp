@@ -19,8 +19,7 @@
  * Usage:
  *   megaloc_test <model.onnx> <image> [<image> ...] [--provider auto|cuda|coreml|cpu]
  *                [--threads N] [--coreml-units U] [--reference <file>] [--dump <file>] [--iters N]
- *   (<model.onnx> is loaded as given: the fp32 export or its '_fp16' twin; on the TensorRT
- *   backend --precision fp32|fp16 selects the engine precision)
+ *   (<model.onnx> is loaded as given: the fp32 export or its '_fp16' twin)
  */
 
 #include <algorithm>
@@ -85,8 +84,7 @@ int main(int argc, char** argv)
     if (argc < 3)
     {
         std::printf("usage: %s <model.onnx> <image> [<image> ...] [--provider auto|cuda|coreml|cpu] "
-                    "[--threads N] [--coreml-units U] [--reference <file>] [--dump <file>] [--iters N] "
-                    "[--precision fp32|fp16 (TensorRT engine only)]\n",
+                    "[--threads N] [--coreml-units U] [--reference <file>] [--dump <file>] [--iters N]\n",
                     argv[0]);
         return 1;
     }
@@ -97,9 +95,7 @@ int main(int argc, char** argv)
     std::vector<std::string> images;
     for (int i = 2; i < argc; ++i)
     {
-        if (std::strcmp(argv[i], "--precision") == 0 && i + 1 < argc)
-            settings.precision = argv[++i];
-        else if (std::strcmp(argv[i], "--provider") == 0 && i + 1 < argc)
+        if (std::strcmp(argv[i], "--provider") == 0 && i + 1 < argc)
             settings.provider = argv[++i];
         else if (std::strcmp(argv[i], "--threads") == 0 && i + 1 < argc)
             settings.threads = std::atoi(argv[++i]);
@@ -117,11 +113,9 @@ int main(int argc, char** argv)
 
     auto t0 = std::chrono::steady_clock::now();
     placecell::MegaLocEmbedder embedder(onnxPath, settings);
-    const std::string label = std::string(placecell::MegaLocEmbedder::backend()) + "/" + embedder.provider() + " " +
-                              embedder.precision();
-    std::printf("%s ready in %.0f ms (%s, %d-d): %s\n", label.c_str(), msSince(t0),
-                embedder.loaded_from_cache() ? "loaded" : "built", embedder.descriptor_dim(),
-                embedder.engine_path().c_str());
+    const std::string label = "onnxruntime/" + embedder.provider() + " " + embedder.precision();
+    std::printf("%s ready in %.0f ms (%d-d): %s\n", label.c_str(), msSince(t0), embedder.descriptor_dim(),
+                embedder.model_path().c_str());
 
     std::vector<Eigen::VectorXf> descs;
     std::vector<std::string> names;

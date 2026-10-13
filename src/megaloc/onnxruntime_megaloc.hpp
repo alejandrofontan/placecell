@@ -19,8 +19,9 @@
  *
  * A requested provider that is not available falls back to "auto" with a warning; the
  * CPU provider is always appended last, so any node a provider does not support still
- * runs. Unlike TensorRT there is no engine build: session creation takes seconds (CPU,
- * CUDA) to a minute (CoreML's first compile), and nothing is GPU-specific on disk.
+ * runs. There is no ahead-of-time engine: session creation takes seconds (CPU, CUDA) to
+ * a minute (CoreML's first compile of a model file, cached next to it afterwards), and
+ * nothing GPU-specific is written next to the model except that CoreML cache.
  *
  * The model file is loaded as given: precision is a property of the file (the export
  * writes 'megaloc_322x322.onnx' in fp32 and the twin 'megaloc_322x322_fp16.onnx' with
@@ -79,10 +80,8 @@ class OnnxRuntimeMegaLoc
     const std::string& provider() const { return provider_; }
     /** The loaded file's weight precision, from its sidecar ("fp32" | "fp16"). */
     const std::string& precision() const { return sidecar_.precision; }
-    /** The model file actually loaded (the fp16 twin when precision asked for it). */
-    const std::string& enginePath() const { return modelPath_; }
-    /** No engine cache in this backend: always true (the model file is the artefact). */
-    bool loadedFromCache() const { return true; }
+    /** The model file that was loaded. */
+    const std::string& modelPath() const { return modelPath_; }
     int descriptorDim() const { return sidecar_.descriptorDim; }
     int inputWidth() const { return sidecar_.inputWidth; }
     int inputHeight() const { return sidecar_.inputHeight; }

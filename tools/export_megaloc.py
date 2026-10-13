@@ -27,10 +27,10 @@ model for placecell's MegaLoc embedder. Reproducible end to end:
   6. (--fp16, default on) converts the export to an fp16-weights twin
      '<export_stem>_fp16.onnx' + sidecar: weights and internal tensors in float16, the
      input/output still float32 (keep_io_types) so the C++ side is byte-for-byte the
-     same, and every node outside the '/backbone/' scope (Sinkhorn optimal transport,
-     cluster aggregation, the final linear) kept in float32 - the same mixed-precision
-     policy the TensorRT backend applies at engine-build time, here baked into the file
-     for runtimes without a per-layer precision switch (ONNX Runtime CPU/CUDA/CoreML);
+     same, and the aggregator (Sinkhorn optimal transport, cluster aggregation, the final
+     linear; everything downstream of the backbone's last LayerNormalization) kept in
+     float32 - a mixed-precision policy baked into the file, since ONNX Runtime's
+     providers (CPU / CUDA / CoreML) have no per-layer precision switch;
   7. optionally (--test_images) runs a numerical self-check: original torch model vs
      the export wrapper vs ONNX Runtime on the exported file(s), and writes the torch
      reference descriptors to '<export_stem>_reference.txt' for test_megaloc (C++).

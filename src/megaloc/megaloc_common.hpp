@@ -6,11 +6,11 @@
  * - Created: 2026-10-13
  * - License: Apache-2.0 (MegaLoc itself is MIT)
  *
- * What every MegaLoc backend shares and none may reimplement: the sidecar the export
+ * What surrounds the graph and is independent of how it runs: the sidecar the export
  * script writes next to the ONNX, the image preprocessing that must match
  * tools/export_megaloc.py::preprocess_cv2 exactly, the host-side re-normalisation of
- * the descriptor, the cosine helper, and the choice of model file by precision. A
- * backend (ONNX Runtime, TensorRT) only runs the graph.
+ * the descriptor and the cosine helper. The backend (onnxruntime_megaloc.hpp) only runs
+ * the graph; any future backend reuses this file unchanged.
  */
 #ifndef PLACECELL_MEGALOC_COMMON_HPP
 #define PLACECELL_MEGALOC_COMMON_HPP

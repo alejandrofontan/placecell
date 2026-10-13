@@ -108,7 +108,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-CMake options: `PLACECELL_BUILD_EXAMPLES` (default `ON`), `PLACECELL_BUILD_PYTHON` (default `OFF`, needs Python + nanobind), `PLACECELL_WITH_MEGALOC` (default `OFF`, CUDA + TensorRT + OpenCV + yaml-cpp), `PLACECELL_WITH_VIZ` (default `OFF`, OpenCV).
+CMake options: `PLACECELL_BUILD_EXAMPLES` (default `ON`), `PLACECELL_BUILD_PYTHON` (default `OFF`, needs Python + nanobind), `PLACECELL_WITH_MEGALOC` (default `OFF`, ONNX Runtime + OpenCV + yaml-cpp; the execution provider — CUDA, CoreML, CPU — is chosen at runtime), `PLACECELL_WITH_VIZ` (default `OFF`, OpenCV).
 
 ## Use from another CMake project
 
