@@ -184,7 +184,7 @@ platforms = ["linux-64-cuda"]
 # PYTHONNOUSERSITE: keep ~/.local/lib/pythonX.Y/site-packages out of the env (a stale user-site package there, e.g.
 # an empty `triton` folder, shadows the real module and breaks torch's import)
 export-models = { cmd = "python tools/export_megaloc.py", env = { PYTHONNOUSERSITE = "1" } }
-upload-models = { cmd = "hf upload vslamlab/megaloc-models megaloc_models . --include='*.onnx' --include='*.yaml'" }
+upload-models = { cmd = "hf upload vslamlab/megaloc-models megaloc_models . --include='*.onnx' --include='*.yaml' --include='*_reference.txt'" }
 
 [feature.export-megaloc.dependencies]
 # Torch libraries: >=2.9 for the matured torch.export-based ONNX exporter (dynamo=True, the default
