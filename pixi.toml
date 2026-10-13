@@ -5,6 +5,7 @@ name = "placecell"
 version = "0.1.0"
 platforms = [
     { name = "linux-64-cuda", platform = "linux-64", cuda = "12.0" },
+    "osx-arm64",   # the core, viz and the ONNX Runtime MegaLoc backend (AllFeature-VSLAM's macOS port)
 ]
 preview = ["pixi-build"]
 
@@ -93,6 +94,8 @@ matplotlib = "*"
 default = []
 megaloc = { features = ["megaloc"], solve-group = "megaloc" }
 export-megaloc = { features = ["export-megaloc", "megaloc"], solve-group = "megaloc" }
+# ONNX Runtime backend (linux-64 with the CUDA provider, osx-arm64 with CoreML), no TensorRT / CUDA toolkit
+megaloc-onnx = { features = ["megaloc-onnx"], no-default-feature = true }
 docs = { features = ["docs"], no-default-feature = true }
 paper = { features = ["paper"], no-default-feature = true }
 
@@ -102,11 +105,12 @@ platforms = ["linux-64-cuda"]
 
 [feature.megaloc.tasks]
 # The megaloc env carries OpenCV, so the viz module (heatmap / information plots) builds here too
-configure-megaloc = "cmake -S . -B build-megaloc -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_WITH_VIZ=ON -DPLACECELL_BUILD_PYTHON=ON"
+configure-megaloc = "cmake -S . -B build-megaloc -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_MEGALOC_BACKEND=tensorrt -DPLACECELL_WITH_VIZ=ON -DPLACECELL_BUILD_PYTHON=ON"
 demo-viz = { cmd = "./build-megaloc/examples/synthetic_demo placecell_demo_out --windows", depends-on = ["build-megaloc"] }
-# Snapshot of the model repo (ONNX + sidecar yamls) into megaloc_models/; skipped once
-# an ONNX is present there (also the case right after a local tools/export_megaloc.py run)
-download-models = { cmd = "hf download vslamlab/megaloc-models --local-dir megaloc_models", outputs = ["megaloc_models/*.onnx"] }
+# The published model files (ONNX + sidecar yamls) into megaloc_models/, per file and never overwriting:
+# a local tools/export_megaloc.py run produces the same names and must survive (`hf download --local-dir`
+# replaces them, and pixi's `outputs` check alone does not skip the task)
+download-models = "python tools/download_models.py"
 build-megaloc = { cmd = "cmake --build build-megaloc", depends-on = ["configure-megaloc", "download-models"] }
 megaloc-smoke = { cmd = "./build-megaloc/examples/megaloc_test", depends-on = ["build-megaloc"] }
 
@@ -136,6 +140,39 @@ yaml-cpp = "*"
 
 # `hf download` for download-models
 huggingface_hub = "*"
+
+# megaloc-onnx env = the MegaLoc embedder on ONNX Runtime (PLACECELL_MEGALOC_BACKEND=onnxruntime), the
+# backend AllFeature-VSLAM uses on both platforms: CUDA execution provider on linux-64 (the cuda129 build
+# of onnxruntime-cpp, CUDA 12.9 like AllFeature's env), CoreML + CPU on osx-arm64. No TensorRT, no CUDA
+# toolkit, no Python. Build dir build-onnx/.
+[feature.megaloc-onnx]
+channels = ["https://prefix.dev/conda-forge"]
+
+[feature.megaloc-onnx.tasks]
+configure-onnx = "cmake -S . -B build-onnx -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLACECELL_WITH_MEGALOC=ON -DPLACECELL_MEGALOC_BACKEND=onnxruntime -DPLACECELL_WITH_VIZ=ON -DPLACECELL_BUILD_PYTHON=OFF"
+# Per-file, never overwrites: a local export in megaloc_models/ (tools/export_megaloc.py) is kept as is
+download-models-onnx = "python tools/download_models.py"
+build-onnx = { cmd = "cmake --build build-onnx --parallel 3", depends-on = ["configure-onnx", "download-models-onnx"] }
+# pixi run -e megaloc-onnx megaloc-test megaloc_models/megaloc_322x322.onnx <img>... [--provider cuda|coreml|cpu]
+#   [--precision fp32|fp16] [--threads N] [--reference megaloc_models/megaloc_322x322_reference.txt] [--dump f] [--iters N]
+megaloc-test = { cmd = "./build-onnx/examples/megaloc_test", depends-on = ["build-onnx"] }
+megaloc-smoke-onnx = { cmd = "./build-onnx/examples/megaloc_embedder_smoke", depends-on = ["build-onnx"] }
+
+[feature.megaloc-onnx.dependencies]
+cxx-compiler = "*"
+cmake = "*"
+ninja = "*"
+eigen = "*"
+opencv = "4.12.*"
+yaml-cpp = "*"
+onnxruntime-cpp = "1.31.*"
+huggingface_hub = "*"   # `hf download` for download-models-onnx
+
+[feature.megaloc-onnx.target.linux-64.dependencies]
+onnxruntime-cpp = { version = "1.31.*", build = "*cuda129*" }   # CUDA execution provider, CUDA 12.9
+cuda-version = "12.9.*"
+cuda-cudart = "*"   # libcudart.so.12: dlopened by the CUDA provider at runtime, not a declared dependency of the package
+cudnn = "*"
 
 [feature.export-megaloc]
 platforms = ["linux-64-cuda"]

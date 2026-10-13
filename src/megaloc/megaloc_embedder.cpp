@@ -2,9 +2,9 @@
  * Module: placecell - megaloc_embedder.cpp
  * - Author: Alejandro Fontan Villacampa
  * - Assisted by: Claude (Fable 5)
- * - Version: 1.1
+ * - Version: 1.2
  * - Created: 2026-09-02
- * - Updated: 2026-09-05
+ * - Updated: 2026-10-13
  * - License: Apache-2.0
  */
 #include "placecell/megaloc_embedder.h"
@@ -13,31 +13,55 @@
 #include <vector>
 
 #include "placecell/log.h"
+
+#if PLACECELL_MEGALOC_TENSORRT
 #include "tensorrt_megaloc.hpp"
+#else
+#include "onnxruntime_megaloc.hpp"
+#endif
 
 namespace placecell {
     struct MegaLocEmbedder::Impl
     {
-        Impl(const std::string& onnx_path, const std::string& precision)
-            : engine(onnx_path, precision) {}
-
+#if PLACECELL_MEGALOC_TENSORRT
+        explicit Impl(const std::string& onnx_path, const Settings& s)
+            : engine(onnx_path, s.precision), provider_name("tensorrt") {}
         megaloc::TensorRTMegaLoc engine;
-        std::mutex mutex;   // TensorRTMegaLoc is not thread-safe: one execution context
+#else
+        explicit Impl(const std::string& onnx_path, const Settings& s)
+            : engine(onnx_path, s.precision, s.provider, s.threads, s.coreml_compute_units),
+              provider_name(engine.provider()) {}
+        megaloc::OnnxRuntimeMegaLoc engine;
+#endif
+        std::string provider_name;
+        std::mutex mutex;   // the backends are not thread-safe: one session / execution context
         Profiler profiler{"MegaLocEmbedder"};
     };
 
-    MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path, const std::string& precision)
-    : impl_(std::make_unique<Impl>(onnx_path, precision))
+    MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path, const Settings& settings)
+    : impl_(std::make_unique<Impl>(onnx_path, settings))
     {
         impl_->profiler.declare({"embed"});
-        // Absorb the one-time lazy CUDA/TensorRT warmup here (constructor is already
-        // the slow path) rather than on the first real embed()
+        // Absorb the one-time lazy warmup (kernel selection, allocator growth, CoreML
+        // compile) here (the constructor is already the slow path) rather than on the
+        // first real embed()
         const Profiler::Stopwatch warmup;
         (void)impl_->engine.infer(cv::Mat::zeros(480, 640, CV_8UC3));
-        PLACECELL_INFO("MegaLocEmbedder", "engine " << (impl_->engine.loadedFromCache() ? "loaded" : "built")
-                       << " (" << precision << ", " << impl_->engine.descriptorDim() << "-d, input "
-                       << impl_->engine.inputWidth() << "x" << impl_->engine.inputHeight() << "): "
-                       << impl_->engine.enginePath() << "; warmup " << warmup.ms() << " ms");
+        PLACECELL_INFO("MegaLocEmbedder", backend() << " ready (" << (impl_->engine.loadedFromCache() ? "loaded" : "built")
+                       << ", provider " << impl_->provider_name << ", " << settings.precision << ", "
+                       << impl_->engine.descriptorDim() << "-d, input " << impl_->engine.inputWidth() << "x"
+                       << impl_->engine.inputHeight() << "): " << impl_->engine.enginePath() << "; warmup "
+                       << warmup.ms() << " ms");
+    }
+
+    MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path)
+    : MegaLocEmbedder(onnx_path, Settings())
+    {
+    }
+
+    MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path, const std::string& precision)
+    : MegaLocEmbedder(onnx_path, Settings{precision, "auto", 4, "ALL"})
+    {
     }
 
     // Defined here, below Impl's definition, so unique_ptr<Impl> destroys a complete type
@@ -59,6 +83,20 @@ namespace placecell {
     int MegaLocEmbedder::descriptor_dim() const
     {
         return impl_->engine.descriptorDim();
+    }
+
+    const char* MegaLocEmbedder::backend()
+    {
+#if PLACECELL_MEGALOC_TENSORRT
+        return "tensorrt";
+#else
+        return "onnxruntime";
+#endif
+    }
+
+    const std::string& MegaLocEmbedder::provider() const
+    {
+        return impl_->provider_name;
     }
 
     bool MegaLocEmbedder::loaded_from_cache() const
@@ -84,7 +122,7 @@ namespace placecell {
     float MegaLocEmbedder::cosine(const Eigen::Ref<const Eigen::VectorXf>& a,
                                   const Eigen::Ref<const Eigen::VectorXf>& b)
     {
-        // Same semantics as TensorRTMegaLoc::cosine (parity for consumers migrating
+        // Same semantics as the backends' cosine (parity for consumers migrating
         // from the wrapper): double accumulation, 0 on empty or mismatched sizes
         if(a.size() == 0 || a.size() != b.size())
             return 0.0f;

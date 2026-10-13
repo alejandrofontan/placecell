@@ -17,8 +17,6 @@
 #include <stdexcept>
 
 #include <NvOnnxParser.h>
-#include <opencv2/imgproc.hpp>
-#include <yaml-cpp/yaml.h>
 
 #include "placecell/log.h"
 
@@ -65,7 +63,7 @@ TensorRTMegaLoc::TensorRTMegaLoc(const std::string& onnxPath, const std::string&
         throw std::runtime_error("TensorRTMegaLoc: precision must be fp16 or fp32, got " +
                                  precision_);
 
-    loadSidecarYaml(sidecarYamlPath.empty() ? onnxPath + ".yaml" : sidecarYamlPath);
+    sidecar_ = loadSidecar(sidecarYamlPath.empty() ? onnxPath + ".yaml" : sidecarYamlPath);
 
     runtime_.reset(nvinfer1::createInferRuntime(logger_));
     if (!runtime_)
@@ -95,30 +93,6 @@ TensorRTMegaLoc::~TensorRTMegaLoc()
         cudaFree(dOutput_);
     if (stream_ != nullptr)
         cudaStreamDestroy(stream_);
-}
-
-void TensorRTMegaLoc::loadSidecarYaml(const std::string& yamlPath)
-{
-    YAML::Node root;
-    try
-    {
-        root = YAML::LoadFile(yamlPath);
-    }
-    catch (const std::exception& e)
-    {
-        throw std::runtime_error("TensorRTMegaLoc: cannot read sidecar " + yamlPath + ": " +
-                                 e.what());
-    }
-    for (int c = 0; c < 3; ++c)
-    {
-        mean_[c] = root["mean"][c].as<float>();
-        std_[c] = root["std"][c].as<float>();
-    }
-    inputName_ = root["input_tensor"].as<std::string>();
-    outputName_ = root["output_tensor"].as<std::string>();
-    inputH_ = root["input_height"].as<int>();
-    inputW_ = root["input_width"].as<int>();
-    descriptorDim_ = root["descriptor_dim"].as<int>();
 }
 
 void TensorRTMegaLoc::buildEngine(const std::string& onnxPath)
@@ -225,60 +199,37 @@ void TensorRTMegaLoc::setupInference()
     if (!context_)
         throw std::runtime_error("TensorRTMegaLoc: createExecutionContext failed");
 
-    const nvinfer1::Dims inDims = engine_->getTensorShape(inputName_.c_str());
-    const nvinfer1::Dims outDims = engine_->getTensorShape(outputName_.c_str());
+    const nvinfer1::Dims inDims = engine_->getTensorShape(sidecar_.inputName.c_str());
+    const nvinfer1::Dims outDims = engine_->getTensorShape(sidecar_.outputName.c_str());
     if (inDims.nbDims != 4 || outDims.nbDims != 2)
         throw std::runtime_error("TensorRTMegaLoc: unexpected tensor ranks - wrong ONNX? " +
                                  describeIOTensors());
-    if (inDims.d[2] != inputH_ || inDims.d[3] != inputW_)
+    if (inDims.d[2] != sidecar_.inputHeight || inDims.d[3] != sidecar_.inputWidth)
         throw std::runtime_error("TensorRTMegaLoc: sidecar input size disagrees with engine: " +
                                  describeIOTensors());
-    if (outDims.d[1] != descriptorDim_)
+    if (outDims.d[1] != sidecar_.descriptorDim)
         throw std::runtime_error(
             "TensorRTMegaLoc: sidecar descriptor_dim disagrees with engine: " +
             describeIOTensors());
-    if (engine_->getTensorDataType(outputName_.c_str()) != nvinfer1::DataType::kFLOAT)
+    if (engine_->getTensorDataType(sidecar_.outputName.c_str()) != nvinfer1::DataType::kFLOAT)
         throw std::runtime_error("TensorRTMegaLoc: output is not float32 - wrong ONNX export?");
 
-    const size_t nIn = 3ULL * inputH_ * inputW_;
+    const size_t nIn = 3ULL * sidecar_.inputHeight * sidecar_.inputWidth;
     hostInput_.resize(nIn);
-    hostOutput_.resize(static_cast<size_t>(descriptorDim_));
+    hostOutput_.resize(static_cast<size_t>(sidecar_.descriptorDim));
     cudaCheck(cudaStreamCreate(&stream_), "cudaStreamCreate");
     cudaCheck(cudaMalloc(&dInput_, nIn * sizeof(float)), "cudaMalloc(input)");
     cudaCheck(cudaMalloc(&dOutput_, hostOutput_.size() * sizeof(float)), "cudaMalloc(output)");
 
-    if (!context_->setTensorAddress(inputName_.c_str(), dInput_) ||
-        !context_->setTensorAddress(outputName_.c_str(), dOutput_))
+    if (!context_->setTensorAddress(sidecar_.inputName.c_str(), dInput_) ||
+        !context_->setTensorAddress(sidecar_.outputName.c_str(), dOutput_))
         throw std::runtime_error("TensorRTMegaLoc: setTensorAddress failed (name mismatch?)");
 }
 
 std::vector<float> TensorRTMegaLoc::infer(const cv::Mat& imageBGR)
 {
-    // --- preprocess: must match preprocess_cv2() in export_megaloc.py ---
-    // (3-channel BGR -> area resize -> RGB -> /255 -> (x-mean)/std -> CHW planar)
-    cv::Mat bgr = imageBGR;
-    if (imageBGR.channels() == 1)
-        cv::cvtColor(imageBGR, bgr, cv::COLOR_GRAY2BGR);
-    else if (imageBGR.channels() == 4)
-        cv::cvtColor(imageBGR, bgr, cv::COLOR_BGRA2BGR);
-    cv::Mat resized;
-    cv::resize(bgr, resized, cv::Size(inputW_, inputH_), 0, 0, cv::INTER_AREA);
-
-    const int hw = inputH_ * inputW_;
-    float* rPlane = hostInput_.data(); // CHW: R plane first (BGR->RGB swap)
-    float* gPlane = hostInput_.data() + hw;
-    float* bPlane = hostInput_.data() + 2 * hw;
-    for (int y = 0; y < inputH_; ++y)
-    {
-        const cv::Vec3b* row = resized.ptr<cv::Vec3b>(y);
-        for (int x = 0; x < inputW_; ++x)
-        {
-            const int i = y * inputW_ + x;
-            bPlane[i] = (row[x][0] / 255.0f - mean_[2]) / std_[2];
-            gPlane[i] = (row[x][1] / 255.0f - mean_[1]) / std_[1];
-            rPlane[i] = (row[x][2] / 255.0f - mean_[0]) / std_[0];
-        }
-    }
+    // --- preprocess (shared with every backend, megaloc_common.hpp) ---
+    preprocess(imageBGR, sidecar_, hostInput_);
 
     // --- inference: H2D, enqueue, D2H, all ordered on one stream ---
     cudaCheck(cudaMemcpyAsync(dInput_, hostInput_.data(), hostInput_.size() * sizeof(float),
@@ -293,28 +244,13 @@ std::vector<float> TensorRTMegaLoc::infer(const cv::Mat& imageBGR)
 
     // --- postprocess: host-side re-normalisation (fp16 leaves |d| slightly off 1) ---
     std::vector<float> descriptor = hostOutput_;
-    double sq = 0.0;
-    for (const float v : descriptor)
-        sq += static_cast<double>(v) * v;
-    const float inv = sq > 0.0 ? static_cast<float>(1.0 / std::sqrt(sq)) : 0.0f;
-    for (float& v : descriptor)
-        v *= inv;
+    normalizeInPlace(descriptor);
     return descriptor;
 }
 
 float TensorRTMegaLoc::cosine(const std::vector<float>& a, const std::vector<float>& b)
 {
-    if (a.empty() || a.size() != b.size())
-        return 0.0f;
-    double dot = 0.0, na = 0.0, nb = 0.0;
-    for (size_t i = 0; i < a.size(); ++i)
-    {
-        dot += static_cast<double>(a[i]) * b[i];
-        na += static_cast<double>(a[i]) * a[i];
-        nb += static_cast<double>(b[i]) * b[i];
-    }
-    const double den = std::sqrt(na) * std::sqrt(nb);
-    return den > 0.0 ? static_cast<float>(dot / den) : 0.0f;
+    return megaloc::cosine(a, b);
 }
 
 std::string TensorRTMegaLoc::describeIOTensors() const

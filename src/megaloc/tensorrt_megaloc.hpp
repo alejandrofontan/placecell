@@ -25,7 +25,6 @@
 #ifndef MEGALOC_TENSORRT_TENSORRT_MEGALOC_HPP
 #define MEGALOC_TENSORRT_TENSORRT_MEGALOC_HPP
 
-#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,6 +32,8 @@
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
 #include <opencv2/core.hpp>
+
+#include "megaloc_common.hpp"
 
 namespace megaloc
 {
@@ -76,9 +77,11 @@ class TensorRTMegaLoc
     bool loadedFromCache() const { return loadedFromCache_; }
 
     const std::string& enginePath() const { return enginePath_; }
-    int descriptorDim() const { return descriptorDim_; }
-    int inputWidth() const { return inputW_; }
-    int inputHeight() const { return inputH_; }
+    /** This backend has no provider choice. */
+    const std::string& provider() const { return provider_; }
+    int descriptorDim() const { return sidecar_.descriptorDim; }
+    int inputWidth() const { return sidecar_.inputWidth; }
+    int inputHeight() const { return sidecar_.inputHeight; }
 
   private:
     /** TensorRT's only output channel, forwarded to the placecell Logger (component
@@ -97,25 +100,16 @@ class TensorRTMegaLoc
      *  also when the cache predates the ONNX it was built from. */
     bool tryLoadEngine(const std::string& onnxPath);
 
-    /** Read normalisation, tensor names, input size and descriptor dim from the sidecar. */
-    void loadSidecarYaml(const std::string& yamlPath);
-
     /** Create execution context + CUDA stream, allocate and bind GPU buffers sized from
      *  the engine's own tensor shapes (the YAML is cross-checked against them). */
     void setupInference();
 
     std::string precision_;
     std::string enginePath_;
+    std::string provider_{"tensorrt"};
     bool loadedFromCache_{false};
 
-    // --- sidecar-provided inference parameters ---
-    std::array<float, 3> mean_{};
-    std::array<float, 3> std_{};
-    std::string inputName_{"input"};
-    std::string outputName_{"descriptor"};
-    int inputW_{0};
-    int inputH_{0};
-    int descriptorDim_{0};
+    Sidecar sidecar_;   // normalisation, tensor names, input size, descriptor dim (megaloc_common.hpp)
 
     // Declaration order is destruction order in reverse: context before engine,
     // engine before runtime.

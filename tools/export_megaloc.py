@@ -334,6 +334,34 @@ def aggregator_nodes(model) -> list[str]:
     return names
 
 
+def ensure_float32_io(model) -> None:
+    """keep_io_types=True keeps the inputs float32 but, when a graph output is produced
+    by a node on the block list, onnxconverter-common still appends a Cast to float16
+    and declares the output float16 (seen on the dynamo export: the final Div stays
+    fp32, then 'node_div_3_output_cast0' casts it down). The C++ contract is float32
+    I/O, so re-point such casts to float32 (or add one) and fix the declared type."""
+    import onnx
+    from onnx import TensorProto
+
+    producers = {out: n for n in model.graph.node for out in n.output}
+    for output in model.graph.output:
+        if output.type.tensor_type.elem_type != TensorProto.FLOAT16:
+            continue
+        node = producers.get(output.name)
+        if node is not None and node.op_type == "Cast":
+            for attr in node.attribute:
+                if attr.name == "to":
+                    attr.i = TensorProto.FLOAT
+        else:
+            half_name = output.name + "_fp16"
+            if node is not None:
+                node.output[list(node.output).index(output.name)] = half_name
+            model.graph.node.append(onnx.helper.make_node(
+                "Cast", [half_name], [output.name], name=output.name + "_to_fp32", to=TensorProto.FLOAT))
+        output.type.tensor_type.elem_type = TensorProto.FLOAT
+        print(f"  output '{output.name}' restored to float32")
+
+
 def convert_fp16(fp32_path: Path, fp16_path: Path) -> tuple[int, int]:
     """fp16-weights twin of an fp32 export (onnxconverter-common). I/O tensors stay
     float32 (the converter inserts the casts); the aggregator (see aggregator_nodes)
@@ -347,6 +375,7 @@ def convert_fp16(fp32_path: Path, fp16_path: Path) -> tuple[int, int]:
     kept = aggregator_nodes(model)
     model16 = float16.convert_float_to_float16(
         model, keep_io_types=True, node_block_list=kept, disable_shape_infer=True)
+    ensure_float32_io(model16)
     onnx.save(model16, str(fp16_path))
     onnx.checker.check_model(str(fp16_path))
     converted = len(model.graph.node) - len(kept)

@@ -24,6 +24,13 @@ MegaLocPlaceCell::MegaLocPlaceCell(const std::string& onnx_path, const std::stri
     profiler().declare({"add_image", "unexplained_information_image"});
 }
 
+MegaLocPlaceCell::MegaLocPlaceCell(const std::string& onnx_path, const MegaLocEmbedder::Settings& settings,
+                                   const Options& options)
+    : PlaceCell(options), embedder_(std::make_shared<MegaLocEmbedder>(onnx_path, settings))
+{
+    profiler().declare({"add_image", "unexplained_information_image"});
+}
+
 MegaLocPlaceCell::MegaLocPlaceCell(std::shared_ptr<MegaLocEmbedder> embedder)
     : MegaLocPlaceCell(std::move(embedder), Options{})
 {
