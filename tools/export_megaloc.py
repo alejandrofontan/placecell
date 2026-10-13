@@ -23,18 +23,28 @@ model for placecell's MegaLoc embedder. Reproducible end to end:
   4. exports [1,3,H,W] float32 (already normalised) -> [1,8448] float32 'descriptor';
   5. writes the sidecar '<export>.yaml' with everything the C++ side must know but
      never hardcode (input size, normalisation, tensor names, descriptor dim, source
-     commit);
-  6. optionally (--test_images) runs a numerical self-check: original torch model vs
-     the export wrapper vs ONNX Runtime on the exported file, and writes the torch
+     commit, precision);
+  6. (--fp16, default on) converts the export to an fp16-weights twin
+     '<export_stem>_fp16.onnx' + sidecar: weights and internal tensors in float16, the
+     input/output still float32 (keep_io_types) so the C++ side is byte-for-byte the
+     same, and every node outside the '/backbone/' scope (Sinkhorn optimal transport,
+     cluster aggregation, the final linear) kept in float32 - the same mixed-precision
+     policy the TensorRT backend applies at engine-build time, here baked into the file
+     for runtimes without a per-layer precision switch (ONNX Runtime CPU/CUDA/CoreML);
+  7. optionally (--test_images) runs a numerical self-check: original torch model vs
+     the export wrapper vs ONNX Runtime on the exported file(s), and writes the torch
      reference descriptors to '<export_stem>_reference.txt' for test_megaloc (C++).
 
 Resolution lock: the ONNX is traced at one resolution (default 322x322 = MegaLoc's own
 evaluation preprocessing, README) and is only valid at that size.
 
-Usage (from the repo root, inside the pixi env):
-  pixi run python Thirdparty/MegaLoc-TensorRT/convert2onnx/export_megaloc.py
-  pixi run python Thirdparty/MegaLoc-TensorRT/convert2onnx/export_megaloc.py \
-      --test_images img1.png img2.png ...
+Exporter: torch.export + onnxscript (dynamo=True, PyTorch's default since 2.9). The
+measurements behind that choice, the fp16 policy and the role of ExportWrapper are in
+docs/notes/2026-10-13_megaloc_onnx_export.md.
+
+Usage (from the placecell root, env export-megaloc):
+  pixi run -e export-megaloc export-models
+  pixi run -e export-megaloc export-models -- --test_images img1.png img2.png ...
 """
 
 from __future__ import annotations
@@ -110,26 +120,33 @@ def load_pretrained_megaloc() -> nn.Module:
 # Export wrapper: same maths as megaloc_model.py, trace-friendly form
 # --------------------------------------------------------------------------------------
 class ExportWrapper(nn.Module):
-    """Fixed-resolution, ONNX-friendly re-expression of MegaLoc.forward.
+    """Fixed-resolution, runtime-friendly re-expression of MegaLoc.forward.
 
-    Differences from upstream are purely structural (validated numerically by
-    --test_images, expected max |diff| ~1e-6):
+    Every learned module is called as is (patch_embed, each block's norm1/attn.qkv/
+    attn.proj/ls1/mlp/ls2/norm2, the final norm, cluster_features, score,
+    token_features, dust_bin, linear); only the glue between them is rewritten, and
+    the result matches the upstream forward to ~4e-7 (--test_images). torch.export
+    captures the upstream forward unchanged too (measured: docs/notes/2026-10-13_
+    megaloc_onnx_export.md), so the rewrites exist for the GRAPH the runtimes get, not
+    for the exporter:
       * MegaLoc.forward's "resize if not a multiple of 14" branch is dropped - the
         export resolution is required to be a multiple of 14 (322 = 23 * 14);
-      * DINOv2.interpolate_pos_encoding (bicubic Resize of the 37x37 grid to the
-        export grid) is evaluated ONCE here with torch's own bicubic kernel and stored
-        as a constant, instead of exporting a Resize op whose cubic flavour TensorRT
-        would have to reproduce bit-for-bit;
+      * DINOv2.interpolate_pos_encoding (bicubic resize of the 37x37 positional grid
+        to the export grid) is evaluated ONCE here with torch's own kernel and stored
+        as a constant. Exported as is it becomes a runtime Resize(cubic) node that
+        every backend implements with its own kernel, for a result that never changes
+        once the resolution is fixed;
       * FeatureAggregator's Sinkhorn (get_matching_probs / log_otp_solver) is written
-        with torch.cat instead of slice-assignment into torch.empty(), and without the
-        batch-ambiguous .squeeze();
+        with torch.cat instead of slice-assignment into torch.empty() (exported as is:
+        ScatterND + ScatterElements, poorly supported outside the CPU provider) and
+        without the batch-ambiguous .squeeze();
       * MultiHeadAttention splits q/k/v as three slices of the QKV projection
         ([B,N,3C] -> 3 x [B,N,C] -> [B,heads,N,hd]) instead of upstream's
-        reshape(B,N,3,heads,hd).permute(2,0,3,1,4)[0..2]. Same maths, but the upstream
-        pattern is MISCOMPILED by TensorRT 10.3's Myelin fuser (block output cos 0.75 vs
-        ONNX Runtime; exposing the qkv tensor even crashes the builder with "No Myelin
-        Error exists"), while the sliced form matches to 1e-3. Found by bisecting the
-        graph stage by stage with trtexec --loadInputs/--exportOutput against ORT.
+        reshape(B,N,3,heads,hd).permute(2,0,3,1,4)[0..2] (exported as is: 38 Gather
+        nodes). The sliced form is the pattern runtimes fuse into one attention kernel,
+        and it was the workaround for a TensorRT 10.3 miscompile of the upstream
+        pattern (block output cos 0.75 vs ONNX Runtime, found by bisecting with
+        trtexec --loadInputs/--exportOutput).
     """
 
     def __init__(self, model: nn.Module, height: int, width: int):
@@ -256,15 +273,22 @@ def preprocess_readme(image_path: Path, resolution: tuple[int, int]) -> torch.Te
 # Export + sidecar
 # --------------------------------------------------------------------------------------
 def export(wrapper: nn.Module, export_path: Path, resolution: tuple[int, int], opset: int) -> None:
+    """Capture the wrapper into an ONNX file with PyTorch's torch.export-based exporter
+    (dynamo=True, the default since torch 2.9): torch.export records the program as an
+    FX graph and onnxscript translates and optimises it (constants and shape arithmetic
+    folded into initialisers - 478 nodes against 807 for the deprecated TorchScript
+    tracer on the same wrapper, same maths to 4e-7; docs/notes/2026-10-13_megaloc_onnx_export.md).
+    external_data=False keeps the ~870 MB of weights inside the single .onnx (the 2 GB
+    protobuf limit is far away) so the model stays one file to download and load."""
     import onnx
 
     export_path.parent.mkdir(parents=True, exist_ok=True)
     dummy = torch.rand((1, 3, *resolution))
     with torch.no_grad():
         torch.onnx.export(
-            wrapper, dummy, str(export_path), opset_version=opset,
+            wrapper, (dummy,), str(export_path), opset_version=opset,
             input_names=["input"], output_names=["descriptor"],
-            do_constant_folding=True, dynamo=False,
+            dynamo=True, external_data=False, optimize=True,
         )
     onnx.checker.check_model(str(export_path))
     model = onnx.load(str(export_path), load_external_data=False)
@@ -272,10 +296,67 @@ def export(wrapper: nn.Module, export_path: Path, resolution: tuple[int, int], o
     outs = [(o.name, [d.dim_value for d in o.type.tensor_type.shape.dim]) for o in model.graph.output]
     print(f"exported: {export_path} ({export_path.stat().st_size / 2**20:.1f} MB, opset {opset})")
     print(f"  inputs  {ins}\n  outputs {outs}")
+    print_graph_stats(model)
+
+
+def print_graph_stats(model) -> None:
+    """One line of graph anatomy: node count, initialiser count, operator histogram -
+    what the runtimes must support."""
+    from collections import Counter
+
+    ops = Counter(n.op_type for n in model.graph.node)
+    n_init = len(model.graph.initializer)
+    print(f"  graph: {len(model.graph.node)} nodes, {n_init} initializers, {len(ops)} operator types")
+    print("  ops:   " + ", ".join(f"{k}x{v}" for k, v in sorted(ops.items(), key=lambda kv: -kv[1])))
+
+
+def aggregator_nodes(model) -> list[str]:
+    """Names of the nodes that belong to the feature aggregator: the backbone's final
+    LayerNormalization and everything downstream of it. Topological, so it holds for
+    either exporter (node names are an exporter artefact: the tracer scopes them as
+    '/backbone/...', the dynamo exporter numbers them and keeps the module path in
+    metadata). The ViT has LayerNormalization only inside the backbone (norm1/norm2 per
+    block, then the final norm); the aggregator (cluster/score convs, Sinkhorn
+    exp/logsumexp, L2 normalisations, the 16640->8448 linear) has none, so the last
+    LayerNormalization in topological order is the boundary."""
+    nodes = model.graph.node
+    last_ln = max((i for i, n in enumerate(nodes) if n.op_type == "LayerNormalization"), default=None)
+    if last_ln is None:
+        raise RuntimeError("no LayerNormalization node: not a MegaLoc export?")
+    producers = {out: i for i, n in enumerate(nodes) for out in n.output}
+    downstream = {last_ln}
+    for i in range(last_ln + 1, len(nodes)):  # nodes are topologically sorted
+        if any(producers.get(x) in downstream for x in nodes[i].input):
+            downstream.add(i)
+    names = [nodes[i].name for i in sorted(downstream)]
+    if any(not n for n in names):
+        raise RuntimeError("unnamed nodes in the export; cannot build a block list")
+    return names
+
+
+def convert_fp16(fp32_path: Path, fp16_path: Path) -> tuple[int, int]:
+    """fp16-weights twin of an fp32 export (onnxconverter-common). I/O tensors stay
+    float32 (the converter inserts the casts); the aggregator (see aggregator_nodes)
+    stays float32 - exp/logsumexp over Sinkhorn scores up to ~20 and the 16640->8448
+    linear lose accuracy in half precision, the ViT does not. Returns (nodes
+    converted, nodes kept fp32)."""
+    import onnx
+    from onnxconverter_common import float16
+
+    model = onnx.load(str(fp32_path))
+    kept = aggregator_nodes(model)
+    model16 = float16.convert_float_to_float16(
+        model, keep_io_types=True, node_block_list=kept, disable_shape_infer=True)
+    onnx.save(model16, str(fp16_path))
+    onnx.checker.check_model(str(fp16_path))
+    converted = len(model.graph.node) - len(kept)
+    print(f"fp16 twin: {fp16_path} ({fp16_path.stat().st_size / 2**20:.1f} MB): "
+          f"{converted} backbone nodes converted, {len(kept)} aggregator nodes kept fp32")
+    return converted, len(kept)
 
 
 def write_sidecar_yaml(yaml_path: Path, resolution: tuple[int, int], commit: str,
-                       descriptor_dim: int) -> None:
+                       descriptor_dim: int, precision: str = "fp32", opset: int = 18) -> None:
     """Hand-written YAML (no pyyaml dependency); read by the C++ side via yaml-cpp."""
     h, w = resolution
     lines = [
@@ -283,6 +364,8 @@ def write_sidecar_yaml(yaml_path: Path, resolution: tuple[int, int], commit: str
         "model: megaloc",
         f"source: {MEGALOC_GIT} @ {commit}",
         f"weights: {HF_REPO}/{HF_WEIGHTS}",
+        f"exporter: torch.export   # torch {torch.__version__}, opset {opset}",
+        f"precision: {precision}   # weights/internal tensors; input and output are float32 either way",
         f"input_width: {w}",
         f"input_height: {h}",
         "# Preprocessing: BGR->RGB, resize to input size (area interpolation), scale to",
@@ -306,20 +389,25 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def self_check(model: nn.Module, wrapper: nn.Module, export_path: Path,
-               image_paths: list[Path], resolution: tuple[int, int]) -> None:
-    """Three descriptor sources per image, all compared against the README-faithful
-    torch reference: (a) torch original model + README preprocessing [reference],
+               image_paths: list[Path], resolution: tuple[int, int],
+               fp16_path: Path | None = None) -> None:
+    """Descriptor sources per image, all compared against the README-faithful torch
+    reference: (a) torch original model + README preprocessing [reference],
     (b) export wrapper + cv2 preprocessing (structural rewrite + preprocessing delta),
-    (c) ONNX Runtime on the exported file + cv2 preprocessing (what C++ reproduces).
-    Writes (a) to '<export_stem>_reference.txt' for Thirdparty/MegaLoc-TensorRT's
-    test_megaloc, which prints cosine(TensorRT, reference) per image."""
+    (c) ONNX Runtime on the exported file + cv2 preprocessing (what C++ reproduces),
+    (d) ONNX Runtime on the fp16 twin when it exists (the half-precision cost alone).
+    Writes (a) to '<export_stem>_reference.txt' for placecell's test_megaloc, which
+    prints cosine(backend, reference) per image. Expected: (b)-(d) within 1e-6 of each
+    other, all ~0.995 against (a) - the preprocessing floor (OpenCV area resize vs
+    torchvision's antialiased resize), identical for every backend."""
     import onnxruntime as ort
 
     providers = ort.get_available_providers()
     chosen = ["CUDAExecutionProvider"] if "CUDAExecutionProvider" in providers else []
     chosen.append("CPUExecutionProvider")
     session = ort.InferenceSession(str(export_path), providers=chosen)
-    print(f"self-check: ORT providers {session.get_providers()}")
+    session16 = ort.InferenceSession(str(fp16_path), providers=chosen) if fp16_path else None
+    print(f"self-check: ORT {ort.__version__}, providers {session.get_providers()}")
 
     ref_descs, onnx_descs = [], []
     with torch.no_grad():
@@ -334,12 +422,16 @@ def self_check(model: nn.Module, wrapper: nn.Module, export_path: Path,
             d_wrap_cv = wrapper(x_cv)[0].numpy()        # (b)
             (d_onnx,) = session.run(["descriptor"], {"input": x_cv.numpy()})  # (c)
             d_onnx = d_onnx[0]
+            extra = ""
+            if session16 is not None:                   # (d)
+                (d_16,) = session16.run(["descriptor"], {"input": x_cv.numpy()})
+                extra += f"  cos(onnx fp16, ref)={cosine(d_16[0], d_ref):.5f}"
 
             print(f"  {path.name}: |ref|={np.linalg.norm(d_ref):.4f}"
                   f"  wrapper-vs-original max|diff|={np.abs(d_wrap_ref - d_ref).max():.2e}"
                   f"  cos(cv2 preprocessing, ref)={cosine(d_wrap_cv, d_ref):.5f}"
                   f"  cos(onnx, ref)={cosine(d_onnx, d_ref):.5f}"
-                  f"  cos(onnx, wrapper cv2)={cosine(d_onnx, d_wrap_cv):.6f}")
+                  f"  cos(onnx, wrapper cv2)={cosine(d_onnx, d_wrap_cv):.6f}{extra}")
             ref_descs.append(d_ref)
             onnx_descs.append(d_onnx)
 
@@ -367,8 +459,11 @@ def main() -> None:
     parser.add_argument("--commit", default=MEGALOC_COMMIT, help="gmberton/MegaLoc commit to pin")
     parser.add_argument("--export_path", type=Path, default=None,
                         help="output .onnx (default: <repo>/megaloc_models/megaloc_<HxW>.onnx)")
-    parser.add_argument("--opset", type=int, default=17)
+    parser.add_argument("--opset", type=int, default=18,
+                        help="ONNX opset (18: LayerNormalization is one node; ORT 1.31 supports up to 23)")
     parser.add_argument("--threads", type=int, default=4, help="torch CPU threads")
+    parser.add_argument("--fp16", action=argparse.BooleanOptionalAction, default=True,
+                        help="also write the fp16-weights twin '<export_stem>_fp16.onnx' (+ sidecar)")
     parser.add_argument("--test_images", type=Path, nargs="*", default=None,
                         help="run the post-export self-check on these images")
     args = parser.parse_args()
@@ -388,11 +483,19 @@ def main() -> None:
     export(wrapper, export_path, resolution, args.opset)
 
     yaml_path = Path(str(export_path) + ".yaml")
-    write_sidecar_yaml(yaml_path, resolution, commit, model.feat_dim)
+    write_sidecar_yaml(yaml_path, resolution, commit, model.feat_dim, "fp32", args.opset)
     print(f"sidecar:  {yaml_path}")
 
+    fp16_path = None
+    if args.fp16:
+        fp16_path = export_path.with_name(export_path.stem + "_fp16.onnx")
+        convert_fp16(export_path, fp16_path)
+        write_sidecar_yaml(Path(str(fp16_path) + ".yaml"), resolution, commit, model.feat_dim,
+                           "fp16", args.opset)
+        print(f"sidecar:  {fp16_path}.yaml")
+
     if args.test_images:
-        self_check(model, wrapper, export_path, args.test_images, resolution)
+        self_check(model, wrapper, export_path, args.test_images, resolution, fp16_path)
 
 
 if __name__ == "__main__":

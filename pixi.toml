@@ -144,19 +144,27 @@ platforms = ["linux-64-cuda"]
 # Export the ONNX + sidecar, then publish them (requires `hf auth login`; creates the
 # repo on first use). Only *.onnx / *.yaml are uploaded -- never the .cache dir or the
 # machine-specific *.engine blobs.
-export-models = "python tools/export_megaloc.py"
+# PYTHONNOUSERSITE: keep ~/.local/lib/pythonX.Y/site-packages out of the env (a stale user-site package there, e.g.
+# an empty `triton` folder, shadows the real module and breaks torch's import)
+export-models = { cmd = "python tools/export_megaloc.py", env = { PYTHONNOUSERSITE = "1" } }
 upload-models = { cmd = "hf upload vslamlab/megaloc-models megaloc_models . --include='*.onnx' --include='*.yaml'" }
 
 [feature.export-megaloc.dependencies]
-# Torch libraries
-pytorch-gpu = "*"
+# Torch libraries: >=2.9 for the matured torch.export-based ONNX exporter (dynamo=True, the default
+# exporter since 2.9; the TorchScript tracer is deprecated). The CPU build: the export traces and the
+# self-check run on the CPU anyway (a few minutes), and the GPU build of 2.9 needs cuda-version >=12.9,
+# which the TensorRT 10.3 packages of the shared `megaloc` solve group do not allow.
+pytorch-cpu = ">=2.9"
 torchvision = "*"
 
 # ONNX libraries
 onnx = "*"
+onnxscript = "*"             # required by the dynamo exporter (op translation + graph optimiser)
 onnxruntime = "*"
+onnxconverter-common = "*"   # fp16-weights twin of the export (export_megaloc.py --fp16)
 
 huggingface_hub = "*"
+safetensors = "*"            # load_file(model.safetensors): a direct import of export_megaloc.py
 git = "*"
 numpy = "<2"
 
