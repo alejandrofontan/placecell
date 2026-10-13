@@ -6,7 +6,7 @@
  * - Created: 2026-09-02
  * - License: Apache-2.0
  *
- * Smoke test of the PUBLIC placecell API (no TensorRT/CUDA headers): embeds every
+ * Smoke test of the PUBLIC placecell API (no ONNX Runtime headers): embeds every
  * image given and prints the descriptor dimension and the pairwise cosine-similarity
  * matrix, then round-trips the same images through MegaLocPlaceCell (add_image /
  * descriptor / idempotence). Rough expectations on real sequence frames: self ~1.0,
@@ -34,8 +34,8 @@ int main(int argc, char** argv)
     }
 
     auto embedder = std::make_shared<placecell::MegaLocEmbedder>(argv[1]);
-    std::cout << "engine " << (embedder->loaded_from_cache() ? "cached" : "built")
-              << ": " << embedder->engine_path()
+    std::cout << "model (" << embedder->provider() << ", " << embedder->precision() << " weights)"
+              << ": " << embedder->model_path()
               << " (descriptor dim " << embedder->descriptor_dim() << ")" << std::endl;
 
     std::vector<Eigen::VectorXf> descriptors;

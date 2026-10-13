@@ -13,13 +13,19 @@
 
 namespace placecell {
 
-MegaLocPlaceCell::MegaLocPlaceCell(const std::string& onnx_path, const std::string& precision)
-    : MegaLocPlaceCell(onnx_path, precision, Options{})
+MegaLocPlaceCell::MegaLocPlaceCell(const std::string& onnx_path)
+    : MegaLocPlaceCell(onnx_path, Options{})
 {
 }
 
-MegaLocPlaceCell::MegaLocPlaceCell(const std::string& onnx_path, const std::string& precision, const Options& options)
-    : PlaceCell(options), embedder_(std::make_shared<MegaLocEmbedder>(onnx_path, precision))
+MegaLocPlaceCell::MegaLocPlaceCell(const std::string& onnx_path, const Options& options)
+    : MegaLocPlaceCell(onnx_path, MegaLocEmbedder::Settings(), options)
+{
+}
+
+MegaLocPlaceCell::MegaLocPlaceCell(const std::string& onnx_path, const MegaLocEmbedder::Settings& settings,
+                                   const Options& options)
+    : PlaceCell(options), embedder_(std::make_shared<MegaLocEmbedder>(onnx_path, settings))
 {
     profiler().declare({"add_image", "unexplained_information_image"});
 }

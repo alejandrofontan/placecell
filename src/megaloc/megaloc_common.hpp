@@ -1,0 +1,59 @@
+/**
+ * Module: placecell - megaloc_common.hpp
+ * - Author: Alejandro Fontan Villacampa
+ * - Assisted by: Claude (Fable 5)
+ * - Version: 1.0
+ * - Created: 2026-10-13
+ * - License: Apache-2.0 (MegaLoc itself is MIT)
+ *
+ * What surrounds the graph and is independent of how it runs: the sidecar the export
+ * script writes next to the ONNX, the image preprocessing that must match
+ * tools/export_megaloc.py::preprocess_cv2 exactly, the host-side re-normalisation of
+ * the descriptor and the cosine helper. The backend (onnxruntime_megaloc.hpp) only runs
+ * the graph; any future backend reuses this file unchanged.
+ */
+#ifndef PLACECELL_MEGALOC_COMMON_HPP
+#define PLACECELL_MEGALOC_COMMON_HPP
+
+#include <array>
+#include <string>
+#include <vector>
+
+#include <opencv2/core.hpp>
+
+namespace megaloc
+{
+
+/** The sidecar '<model>.onnx.yaml' (tools/export_megaloc.py::write_sidecar_yaml):
+ *  everything inference must know but never hardcode. */
+struct Sidecar
+{
+    std::array<float, 3> mean{};   // ImageNet normalisation, RGB order
+    std::array<float, 3> std{};
+    std::string inputName{"input"};
+    std::string outputName{"descriptor"};
+    int inputWidth{0};
+    int inputHeight{0};
+    int descriptorDim{0};
+    std::string precision{"fp32"};   // weights/internal tensors of that file (I/O are float32 either way)
+};
+
+/** Parse the sidecar; throws std::runtime_error with the path on any problem. */
+Sidecar loadSidecar(const std::string& yamlPath);
+
+/** Image -> normalised CHW float planar input ([1,3,H,W], R plane first). Must match
+ *  preprocess_cv2() in tools/export_megaloc.py: 1/4-channel inputs are converted to
+ *  3-channel BGR, area-interpolated resize to the sidecar size, /255, (x-mean)/std.
+ *  `out` is resized to 3*H*W. */
+void preprocess(const cv::Mat& imageBGR, const Sidecar& sidecar, std::vector<float>& out);
+
+/** L2-normalise in place (double accumulation). The graph already normalises, but
+ *  fp16 paths leave |d| slightly off 1; a zero vector stays zero. */
+void normalizeInPlace(std::vector<float>& descriptor);
+
+/** Cosine similarity (double accumulation); 0 when empty or of mismatched sizes. */
+float cosine(const std::vector<float>& a, const std::vector<float>& b);
+
+} // namespace megaloc
+
+#endif // PLACECELL_MEGALOC_COMMON_HPP

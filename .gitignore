@@ -78,11 +78,10 @@ __pycache__/
 dist/
 .venv/
 
-# MegaLoc: upstream clone + exported models/engines (see tools/export_megaloc.py)
+# MegaLoc: upstream clone + exported models and the CoreML compile cache (see tools/export_megaloc.py)
 tools/megaloc/
 megaloc_models/
 *.onnx
-*.engine
 
 # synthetic_demo / PlaceCell::dump() output
 placecell_demo_out/

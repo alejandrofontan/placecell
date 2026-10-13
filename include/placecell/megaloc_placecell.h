@@ -41,9 +41,11 @@ namespace placecell
 class MegaLocPlaceCell : public PlaceCell
 {
 public:
-    // Builds/loads the TensorRT engine and warms it up (see MegaLocEmbedder).
-    explicit MegaLocPlaceCell(const std::string& onnx_path, const std::string& precision = "fp16");
-    MegaLocPlaceCell(const std::string& onnx_path, const std::string& precision, const Options& options);
+    // Creates the embedder (session + warmup, see MegaLocEmbedder) for the model file.
+    explicit MegaLocPlaceCell(const std::string& onnx_path);
+    MegaLocPlaceCell(const std::string& onnx_path, const Options& options);
+    MegaLocPlaceCell(const std::string& onnx_path, const MegaLocEmbedder::Settings& settings,
+                     const Options& options);
     // Share an already-constructed embedder instead.
     explicit MegaLocPlaceCell(std::shared_ptr<MegaLocEmbedder> embedder);
     MegaLocPlaceCell(std::shared_ptr<MegaLocEmbedder> embedder, const Options& options);

@@ -2,9 +2,9 @@
  * Module: placecell - megaloc_embedder.cpp
  * - Author: Alejandro Fontan Villacampa
  * - Assisted by: Claude (Fable 5)
- * - Version: 1.1
+ * - Version: 2.0
  * - Created: 2026-09-02
- * - Updated: 2026-09-05
+ * - Updated: 2026-10-13
  * - License: Apache-2.0
  */
 #include "placecell/megaloc_embedder.h"
@@ -13,31 +13,37 @@
 #include <vector>
 
 #include "placecell/log.h"
-#include "tensorrt_megaloc.hpp"
+#include "onnxruntime_megaloc.hpp"
 
 namespace placecell {
     struct MegaLocEmbedder::Impl
     {
-        Impl(const std::string& onnx_path, const std::string& precision)
-            : engine(onnx_path, precision) {}
+        explicit Impl(const std::string& onnx_path, const Settings& s)
+            : engine(onnx_path, s.provider, s.threads, s.coreml_compute_units) {}
 
-        megaloc::TensorRTMegaLoc engine;
-        std::mutex mutex;   // TensorRTMegaLoc is not thread-safe: one execution context
+        megaloc::OnnxRuntimeMegaLoc engine;
+        std::mutex mutex;   // the backend is not thread-safe: one session, one inference at a time
         Profiler profiler{"MegaLocEmbedder"};
     };
 
-    MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path, const std::string& precision)
-    : impl_(std::make_unique<Impl>(onnx_path, precision))
+    MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path, const Settings& settings)
+    : impl_(std::make_unique<Impl>(onnx_path, settings))
     {
         impl_->profiler.declare({"embed"});
-        // Absorb the one-time lazy CUDA/TensorRT warmup here (constructor is already
-        // the slow path) rather than on the first real embed()
+        // Absorb the one-time lazy warmup (kernel selection, allocator growth, CoreML
+        // compile) here (the constructor is already the slow path) rather than on the
+        // first real embed()
         const Profiler::Stopwatch warmup;
         (void)impl_->engine.infer(cv::Mat::zeros(480, 640, CV_8UC3));
-        PLACECELL_INFO("MegaLocEmbedder", "engine " << (impl_->engine.loadedFromCache() ? "loaded" : "built")
-                       << " (" << precision << ", " << impl_->engine.descriptorDim() << "-d, input "
+        PLACECELL_INFO("MegaLocEmbedder", "ready (provider " << impl_->engine.provider() << ", "
+                       << impl_->engine.precision() << " weights, " << impl_->engine.descriptorDim() << "-d, input "
                        << impl_->engine.inputWidth() << "x" << impl_->engine.inputHeight() << "): "
-                       << impl_->engine.enginePath() << "; warmup " << warmup.ms() << " ms");
+                       << impl_->engine.modelPath() << "; warmup " << warmup.ms() << " ms");
+    }
+
+    MegaLocEmbedder::MegaLocEmbedder(const std::string& onnx_path)
+    : MegaLocEmbedder(onnx_path, Settings())
+    {
     }
 
     // Defined here, below Impl's definition, so unique_ptr<Impl> destroys a complete type
@@ -61,14 +67,19 @@ namespace placecell {
         return impl_->engine.descriptorDim();
     }
 
-    bool MegaLocEmbedder::loaded_from_cache() const
+    const std::string& MegaLocEmbedder::provider() const
     {
-        return impl_->engine.loadedFromCache();
+        return impl_->engine.provider();
     }
 
-    const std::string& MegaLocEmbedder::engine_path() const
+    const std::string& MegaLocEmbedder::precision() const
     {
-        return impl_->engine.enginePath();
+        return impl_->engine.precision();
+    }
+
+    const std::string& MegaLocEmbedder::model_path() const
+    {
+        return impl_->engine.modelPath();
     }
 
     Profiler& MegaLocEmbedder::profiler()
@@ -84,8 +95,8 @@ namespace placecell {
     float MegaLocEmbedder::cosine(const Eigen::Ref<const Eigen::VectorXf>& a,
                                   const Eigen::Ref<const Eigen::VectorXf>& b)
     {
-        // Same semantics as TensorRTMegaLoc::cosine (parity for consumers migrating
-        // from the wrapper): double accumulation, 0 on empty or mismatched sizes
+        // Same semantics as megaloc::cosine (parity for consumers migrating from the
+        // backend): double accumulation, 0 on empty or mismatched sizes
         if(a.size() == 0 || a.size() != b.size())
             return 0.0f;
         const double dot = a.cast<double>().dot(b.cast<double>());
