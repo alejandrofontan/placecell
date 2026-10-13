@@ -58,8 +58,59 @@ Pairwise cosine of the four frames is the same matrix as the Python self-check (
   graph output is produced by a node on the block list, still appends a `Cast` to float16 and declares the output
   float16. `export_megaloc.py::ensure_float32_io` re-points that cast; the C++ side keeps its float32 I/O check.
 
-## Open (phase 2)
+## Thread sweep (Linux CPU, fp32 file)
 
-- T3 on the Mac: provider `coreml` with the three `MLComputeUnits` values and `ProfileComputePlan`, plus `cpu` on
-  the M1 Pro with 2 / 4 / 6 threads.
-- The thread count's effect on the Linux CPU (2 / 4 / 8) was not measured; 4 is the working default.
+| threads | 2 | 4 | 8 |
+|---|---|---|---|
+| ms/image | 391 | 210 | 120 |
+
+Near-linear: the ViT's matrix multiplies parallelise cleanly on the CPU provider.
+
+## Results (macOS: MacBook Pro M1 Pro 6P+2E, 16 GB; Apple clang via conda, `onnxruntime-cpp` 1.31 `cpu` build with the CoreML provider)
+
+Same four frames, same reference file (published with the models and downloaded by `tools/download_models.py`).
+
+| Provider, file, compute units | Session + warmup | Steady state ms/image | cos vs torch reference (per frame; worst) |
+|---|---|---|---|
+| cpu, fp32, 2 threads | 1.4 s | 611 | (not dumped) |
+| cpu, fp32, 4 threads | 1.5 s | 328 | 0.99527 / 0.99581 / 0.99564 / 0.99579; **0.99527** — identical to Linux to the fifth decimal |
+| cpu, fp32, 6 threads | 0.9 s | 229 | |
+| coreml, fp16, `ALL` | 171 s | **41.2** | 0.98289 / 0.98916 / 0.98229 / 0.98308; 0.98229 |
+| coreml, fp16, `CPUAndGPU` | 114 s | **46.0** | 0.99550 / 0.99573 / 0.99545 / 0.99562; **0.99545** |
+| coreml, fp16, `CPUAndNeuralEngine` | 89 s | 42.2 | 0.98288 / 0.98916 / 0.98229 / 0.98307; 0.98229 |
+| coreml, fp32, `ALL` | 174 s | **47.9** | 0.99527 / 0.99581 / 0.99564 / 0.99579; **0.99527** |
+
+Every CoreML session logs `number of partitions supported by CoreML: 13, nodes 545, supported 528` (fp32 file:
+526 / 511): 17 nodes stay on the CPU provider, split into 13 CoreML partitions — the shape/reshape plumbing around
+the attention and the Sinkhorn, at a cost of 13 boundary copies per inference that the steady-state numbers already
+include.
+
+## Reading the Mac
+
+- **The Neural Engine is where the accuracy goes, not the fp16 file.** The fp16 file on `CPUAndGPU` scores 0.9955,
+  the fp32-level figure; the same file on `ALL` or `CPUAndNeuralEngine` drops to 0.982–0.989, and `ALL` on the fp32
+  file is exact again (0.9953) because Core ML runs an fp32 model on the GPU. So the ANE computes with less internal
+  precision than fp16 weights imply. The pairwise structure survives (0.571 vs 0.576 for the near pair, 0.24 vs 0.25
+  for the far ones), so VPR would most likely still work on it, but 0.982 against a 0.9955 floor is a real loss
+  for 5 ms of gain.
+- **The GPU path is the one to use on the Mac:** fp16 file + `CPUAndGPU` (46 ms, 0.9955) or fp32 file + `ALL`
+  (48 ms, 0.9953, i.e. the defaults of the settings keys). Both are 5–7× faster than the 6-thread CPU (229 ms) and
+  ~4× slower than CUDA on the Linux workstation (8–12 ms). At 1–5 keyframes/s that is a few percent of one core's
+  time on the mapping thread.
+- **CPU: 6 threads is the number** on the M1 Pro (229 ms, vs 328 at 4): the two efficiency cores add nothing after
+  that. CPU fp32 reproduces Linux to the fifth decimal — same code, same arithmetic.
+- **Session creation is the open problem: 90–175 s per configuration.** Each of the four CoreML runs was a different
+  (file, compute units) pair, so each may have been a first compile; whether `ModelCacheDirectory` makes the second
+  session of the same configuration fast is the next thing to check (a repeat run of fp32 + `ALL` and a look into
+  `megaloc_models/coreml_cache/`). If it does not, the host would pay 2–3 minutes at every start on the Mac.
+
+**Compile cache, checked:** `megaloc_models/coreml_cache/` holds one entry per model file (two hash-named
+directories, 16 items each — the 13 partitions plus bookkeeping), so the compute-unit choice is not part of the
+key. A repeat of fp32 + `ALL` started in **36 s** instead of 174 s: the Core ML compile is cached, what remains is
+ONNX Runtime's conversion of the graph into the MLProgram partitions (weights included) plus Core ML's load and
+specialisation for the compute units. 36 s at every host start on the Mac is acceptable for now; fewer partitions
+(the phase-6 item below) would also shrink it.
+
+## Open (phase 2)
+- `ProfileComputePlan=1` once, to see which 17 nodes stay on the CPU and whether the attention matmuls run on the
+  GPU (expected) or fall back.
